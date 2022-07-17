@@ -24,6 +24,7 @@ def shiftscale_inv_depthloss(disp_pred, disp_gt):
 
 
 class NeRFLoss(nn.Module):
+
     def __init__(self):
         super().__init__()
 
@@ -35,6 +36,6 @@ class NeRFLoss(nn.Module):
 
         o = results['opacity']+1e-10
         # encourage opacity to be either 0 or 1 to avoid floater
-        d['opacity'] = self.lambda_opa*(-o*torch.log(o))
+        d['opacity'] = self.lambda_opa * (-o * torch.log(o))
 
         return d

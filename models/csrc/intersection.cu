@@ -76,7 +76,7 @@ std::vector<torch::Tensor> ray_aabb_intersect_cu(
     const dim3 threads(256, 1);
     const dim3 blocks((N_rays+threads.x-1)/threads.x,
                       (N_voxels+threads.y-1)/threads.y);
-    
+
     AT_DISPATCH_FLOATING_TYPES(rays_o.type(), "ray_aabb_intersect_cu", 
     ([&] {
         ray_aabb_intersect_kernel<<<blocks, threads>>>(

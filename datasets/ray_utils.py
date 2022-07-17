@@ -19,18 +19,22 @@ def get_ray_directions(H, W, K, random=False, return_uv=False, flatten=True):
         directions: (H, W, 3) or (H*W, 3), the direction of the rays in camera coordinate
         uv: (H, W, 2) or (H*W, 2) image coordinates
     """
-    grid = create_meshgrid(H, W, False, device='cuda')[0] # (H, W, 2)
+    grid = create_meshgrid(H, W, False, device='cuda')[0]  # (H, W, 2)
     u, v = grid.unbind(-1)
 
     fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
     if random:
-        directions = \
-            torch.stack([(u-cx+torch.rand_like(u))/fx,
-                         (v-cy+torch.rand_like(v))/fy,
-                         torch.ones_like(u)], -1)
-    else: # pass by the center
-        directions = \
-            torch.stack([(u-cx+0.5)/fx, (v-cy+0.5)/fy, torch.ones_like(u)], -1)
+        directions = torch.stack([
+            (u - cx + torch.rand_like(u)) / fx,
+            (v - cy + torch.rand_like(v)) / fy,
+            torch.ones_like(u),
+        ], -1)
+    else:  # pass by the center
+        directions = torch.stack([
+            (u - cx + 0.5) / fx,
+            (v - cy + 0.5) / fy,
+            torch.ones_like(u),
+        ], -1)
     if flatten:
         directions = directions.reshape(-1, 3)
         grid = grid.reshape(-1, 2)
@@ -57,7 +61,7 @@ def get_rays(directions, c2w):
     # Rotate ray directions from camera coordinate to the world coordinate
     rays_d = directions @ c2w[:, :3].T # (H*W, 3)
     # The origin of all rays is the camera origin in world coordinate
-    rays_o = c2w[:, 3].expand(rays_d.shape) # (H*W, 3)
+    rays_o = c2w[:, 3].expand(rays_d.shape)  # (H*W, 3)
 
     return rays_o, rays_d
 

@@ -1,7 +1,9 @@
 /.vscode
 /.VSCodeCounter
+data/
 ckpts/
 logs/
+wandb/
 results/
 *.png
 *.mp4

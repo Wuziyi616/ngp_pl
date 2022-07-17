@@ -1,6 +1,7 @@
 import torch
-import vren
 from torch.cuda.amp import custom_fwd, custom_bwd
+
+import vren
 
 
 class RayAABBIntersector(torch.autograd.Function):
@@ -21,10 +22,12 @@ class RayAABBIntersector(torch.autograd.Function):
         hits_t: (N_rays, max_hits, 2) hit t's (-1 if no hit)
         hits_voxel_idx: (N_rays, max_hits) hit voxel indices (-1 if no hit)
     """
+
     @staticmethod
     @custom_fwd(cast_inputs=torch.float32)
     def forward(ctx, rays_o, rays_d, center, half_size, max_hits):
-        return vren.ray_aabb_intersect(rays_o, rays_d, center, half_size, max_hits)
+        return vren.ray_aabb_intersect(rays_o, rays_d, center, half_size,
+                                       max_hits)
 
 
 class RaySphereIntersector(torch.autograd.Function):
@@ -44,10 +47,12 @@ class RaySphereIntersector(torch.autograd.Function):
         hits_t: (N_rays, max_hits, 2) hit t's (-1 if no hit)
         hits_sphere_idx: (N_rays, max_hits) hit sphere indices (-1 if no hit)
     """
+
     @staticmethod
     @custom_fwd(cast_inputs=torch.float32)
     def forward(ctx, rays_o, rays_d, center, radii, max_hits):
-        return vren.ray_sphere_intersect(rays_o, rays_d, center, radii, max_hits)
+        return vren.ray_sphere_intersect(rays_o, rays_d, center, radii,
+                                         max_hits)
 
 
 class RayMarcher(torch.autograd.Function):
@@ -74,6 +79,7 @@ class RayMarcher(torch.autograd.Function):
         deltas: (N) dt for integration
         ts: (N) sample ts
     """
+
     @staticmethod
     @custom_fwd(cast_inputs=torch.float32)
     def forward(ctx, rays_o, rays_d, hits_t,
@@ -89,7 +95,7 @@ class RayMarcher(torch.autograd.Function):
                 density_bitfield, cascades, scale,
                 exp_step_factor, noise, grid_size, max_samples)
 
-        total_samples = counter[0] # total samples for all rays
+        total_samples = counter[0]  # total samples for all rays
         # remove redundant output
         xyzs = xyzs[:total_samples]
         dirs = dirs[:total_samples]
@@ -120,6 +126,7 @@ class VolumeRenderer(torch.autograd.Function):
         depth_sq: (N_rays) expected value of squared distance
         rgb: (N_rays, 3)
     """
+
     @staticmethod
     @custom_fwd(cast_inputs=torch.float32)
     def forward(ctx, sigmas, rgbs, deltas, ts, rays_a, T_threshold):
@@ -146,6 +153,7 @@ class VolumeRenderer(torch.autograd.Function):
 
 
 class TruncExp(torch.autograd.Function):
+
     @staticmethod
     @custom_fwd(cast_inputs=torch.float32)
     def forward(ctx, x):
