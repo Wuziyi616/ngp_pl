@@ -103,11 +103,10 @@ def __render_rays_test(model, rays_o, rays_d, hits_t, **kwargs):
         # remove converged rays
         alive_indices = alive_indices[alive_indices >= 0]
 
-    # TODO: infer env map from network
     rgb_bg = torch.ones(3, device=device) * model.bg_color
     results['opacity'] = opacity
     results['depth'] = depth
-    results['rgb'] = rgb + rgb_bg * rearrange(1 - opacity, 'n -> n 1')
+    results['rgb'] = rgb + rgb_bg * rearrange(1. - opacity, 'n -> n 1')
 
     return results
 
@@ -136,13 +135,12 @@ def __render_rays_train(model, rays_o, rays_d, hits_t, **kwargs):
 
     sigmas, rgbs = model(xyzs, dirs)
 
-    # TODO: infer env map from network
-    rgb_bg = torch.ones(3, device=rays_o.device) * model.bg_color
     results['opacity'], results['depth'], results['depth_sq'], rgb = \
         VolumeRenderer.apply(sigmas, rgbs.contiguous(), deltas, ts,
                              rays_a, kwargs.get('T_threshold', 1e-4))
 
-    results['rgb'] = rgb + rgb_bg * rearrange(1 - results['opacity'],
+    rgb_bg = torch.ones(3, device=rays_o.device) * model.bg_color
+    results['rgb'] = rgb + rgb_bg * rearrange(1. - results['opacity'],
                                               'n -> n 1')
 
     return results

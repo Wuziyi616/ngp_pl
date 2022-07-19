@@ -1,10 +1,13 @@
-import torch
-import glob
-import numpy as np
 import os
+import glob
+
+import numpy as np
 from PIL import Image
-from einops import rearrange
 from tqdm import tqdm
+
+import torch
+import torch.nn.functional as F
+from einops import rearrange
 
 from .ray_utils import get_ray_directions, get_rays
 
@@ -47,7 +50,8 @@ class NSVFDataset(BaseDataset):
             self.K[:2] *= downsample
 
         self.img_wh = (w, h)
-        self.directions = get_ray_directions(h, w, self.K)
+        directions = get_ray_directions(h, w, self.K)
+        self.directions = F.normalize(directions, p=2, dim=-1)
 
         if split.startswith('train'):
             rays_train = self.read_meta('train')

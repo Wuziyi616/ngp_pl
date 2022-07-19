@@ -65,7 +65,7 @@ def slim_ckpt(ckpt_path):
     keys_to_pop = []
     for k in ckpt['state_dict']:
         if k.startswith('val_lpips') or \
-           k in ['weights', 'model.density_grid', 'model.grid_coords']:
+                k in ['weights', 'model.density_grid', 'model.grid_coords']:
             keys_to_pop += [k]
     for k in keys_to_pop:
         ckpt['state_dict'].pop(k)

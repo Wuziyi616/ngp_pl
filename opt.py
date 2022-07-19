@@ -23,6 +23,8 @@ def get_opts():
         help='use which split to train')
     parser.add_argument(
         '--timestep', type=int, default=-1, help='in video nerf')
+    parser.add_argument('--timestep_start', type=int, default=-1)
+    parser.add_argument('--timestep_end', type=int, default=-1)
     parser.add_argument(
         '--downsample',
         type=float,
@@ -47,6 +49,8 @@ def get_opts():
         help='number of rays in a batch')
     parser.add_argument(
         '--num_epochs', type=int, default=20, help='number of training epochs')
+    parser.add_argument(
+        '--ft_num_epochs', type=float, default=5, help='number of FT epochs')
     parser.add_argument(
         '--num_gpus', type=int, default=1, help='number of gpus')
 

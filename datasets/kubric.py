@@ -1,12 +1,13 @@
 import os
-import glob
 import json
+
 import numpy as np
 from PIL import Image
+from tqdm import tqdm
 
 import torch
+import torch.nn.functional as F
 from einops import rearrange
-from tqdm import tqdm
 
 from .base import BaseDataset
 from .ray_utils import get_ray_directions, get_rays
@@ -47,7 +48,8 @@ class KubricDataset(BaseDataset):
             [0., fx, h / 2.],
             [0., 0., 1.],
         ])
-        self.directions = get_ray_directions(h, w, self.K)
+        directions = get_ray_directions(h, w, self.K)
+        self.directions = F.normalize(directions, p=2, dim=-1)
 
         if split == 'train':
             rays_train = self.read_meta('train')

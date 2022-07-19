@@ -22,7 +22,7 @@ class NGP(nn.Module):
         self.register_buffer('center', torch.zeros(1, 3))
         self.register_buffer('xyz_min', -torch.ones(1, 3) * scale)
         self.register_buffer('xyz_max', torch.ones(1, 3) * scale)
-        self.register_buffer('half_size', (self.xyz_max - self.xyz_min) / 2)
+        self.register_buffer('half_size', (self.xyz_max - self.xyz_min) / 2.)
 
         # background color
         self.bg_color = 0. if black_bg else 1.
@@ -122,8 +122,8 @@ class NGP(nn.Module):
             rgbs: (N, 3)
         """
         sigmas, h = self.density(x, return_feat=True)
-        d /= torch.norm(d, dim=-1, keepdim=True)
-        d = self.dir_encoder((d + 1) / 2)
+        # d /= torch.norm(d, dim=-1, keepdim=True)
+        d = self.dir_encoder((d + 1.) / 2.)
         rgbs = self.rgb_net(torch.cat([d, h], 1))
 
         return sigmas, rgbs
