@@ -119,6 +119,10 @@ class DeformNGP(nn.Module):
         return self.ngp_model.half_size
 
     @property
+    def cascades(self):
+        return self.ngp_model.cascades
+
+    @property
     def grid_size(self):
         return self.ngp_model.grid_size
 

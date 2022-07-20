@@ -5,6 +5,7 @@ import cv2
 import imageio
 import warnings
 import numpy as np
+import wandb
 
 import torch
 from einops import rearrange
@@ -19,7 +20,6 @@ from models.rendering import render
 
 # optimizer, losses
 from apex.optimizers import FusedAdam
-from torch.optim.lr_scheduler import CosineAnnealingLR
 from losses import NeRFLoss
 
 # metrics
@@ -30,8 +30,7 @@ from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 # pytorch-lightning
 from pytorch_lightning.plugins import DDPPlugin
 from pytorch_lightning import LightningModule, Trainer
-from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
-from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.utilities.seed import seed_everything
 from pytorch_lightning.utilities.distributed import all_gather_ddp_if_available
 
@@ -55,6 +54,7 @@ class NeRFSystem(LightningModule):
     def __init__(self, hparams, train_dataset, ngp_model):
         super().__init__()
         self.save_hyperparameters(hparams)
+        self.epoch_it = int(hparams.def_num_epochs * 1000)
         self.train_dataset = train_dataset
 
         self.loss = NeRFLoss()
@@ -65,7 +65,7 @@ class NeRFSystem(LightningModule):
         for p in self.val_lpips.net.parameters():
             p.requires_grad = False
 
-        self.model = DeformNGP(ngp_model)
+        self.model = DeformNGP(ngp_model=ngp_model)
 
     def forward(self, rays, split):
         kwargs = {'test_time': split != 'train'}
@@ -75,17 +75,11 @@ class NeRFSystem(LightningModule):
         return render(self.model, rays, **kwargs)
 
     def configure_optimizers(self):
-        opt = FusedAdam(
+        self.opt = FusedAdam(
             filter(lambda p: p.requires_grad, self.model.parameters()),
-            hparams.lr,
+            hparams.def_lr,
             eps=1e-15)
-        sch = CosineAnnealingLR(opt, hparams.num_epochs * 1000,
-                                hparams.lr / 30)
-
-        return ([opt], [{
-            'scheduler': sch,
-            'interval': 'step',
-        }])
+        return self.opt
 
     def training_step(self, batch, batch_nb):
         rays, rgb = batch['rays'], batch['rgb']
@@ -95,8 +89,14 @@ class NeRFSystem(LightningModule):
 
         with torch.no_grad():
             self.train_psnr(results['rgb'], rgb)
-        self.log('train/loss', loss)
-        self.log('train/psnr', self.train_psnr, prog_bar=True)
+
+            step = self.epoch_it * self.hparams.timestep + self.global_step
+            log_dict = {
+                'train/lr': self.opt.param_groups[0]['lr'],
+                'train/loss': loss.detach().item(),
+                'train/psnr': self.train_psnr.compute().item(),
+            }
+            wandb.log(log_dict, step=step)
 
         return loss
 
@@ -135,8 +135,8 @@ class NeRFSystem(LightningModule):
             rgb_pred = np.round(rgb_pred * 255.).astype(np.uint8)
             # depth = depth2img(
             #     rearrange(results['depth'].cpu().numpy(), '(h w) -> h w', h=h))
-            imageio.imsave(
-                os.path.join(self.val_dir, f'{idx:03d}.png'), rgb_pred)
+            fn = f'{hparams.timestep}-{idx:03d}.png'
+            imageio.imsave(os.path.join(self.val_dir, fn), rgb_pred)
             # imageio.imsave(
             #     os.path.join(self.val_dir, f'{idx:03d}_d.png'), depth)
 
@@ -151,21 +151,24 @@ class NeRFSystem(LightningModule):
         mean_ssim = all_gather_ddp_if_available(ssims).mean()
         mean_lpips = all_gather_ddp_if_available(lpipss).mean()
 
-        self.log('test/psnr', mean_psnr, prog_bar=True)
-        self.log('test/ssim', mean_ssim)
-        self.log('test/lpips_vgg', mean_lpips)
-
-        print(f'Test PSNR: {mean_psnr.item():.2f}')
-        print(f'Test SSIM: {mean_ssim.item():.2f}')
-        print(f'Test LPIPS: {mean_lpips.item():.2f}')
+        step = self.epoch_it * self.hparams.timestep + self.global_step
+        log_dict = {
+            'test/psnr': mean_psnr.item(),
+            'test/ssim': mean_ssim.item(),
+            'test/lpips_vgg': mean_lpips.item(),
+        }
+        print('\n\n')
+        print('\n'.join(f'{k}: {v:.4f}' for k, v in log_dict.items()))
+        print('\n\n')
+        wandb.log(log_dict, step=step, commit=True)
 
 
 def build_trainer(hparams):
     return Trainer(
-        max_steps=int(hparams.ft_num_epochs * 1000),
+        max_steps=int(hparams.def_num_epochs * 1000),
         check_val_every_n_epoch=1000000,  # no validation in timing
         callbacks=callbacks,
-        logger=logger,
+        logger=False,
         enable_model_summary=False,
         accelerator='gpu',
         devices=hparams.num_gpus,
@@ -191,14 +194,9 @@ if __name__ == '__main__':
         save_on_train_epoch_end=True,
         save_top_k=-1,
     )
-    lr_cb = LearningRateMonitor(logging_interval='step')
-    callbacks = [ckpt_cb, lr_cb]
+    callbacks = [ckpt_cb]
 
-    logger = WandbLogger(
-        project='ngp_pl',
-        name=hparams.exp_name,
-        save_dir=dir_path,
-    )
+    wandb.init(project='ngp_pl', name=hparams.exp_name, dir=dir_path)
 
     trainer = build_trainer(hparams)
 
@@ -209,13 +207,15 @@ if __name__ == '__main__':
     ngp_model.load_state_dict(ckpt)
 
     system = None
-    for timestep in range(hparams.timestep_start + 1, hparams.timestep_end):
+    for timestep in range(hparams.timestep_start, hparams.timestep_end):
         print('#######################################################')
         print(f'Timestep: {timestep}')
         hparams.timestep = timestep
         train_set, train_loader, test_loader = build_dataloader(hparams)
         if system is None:
             system = NeRFSystem(hparams, train_set, ngp_model)
+            trainer.validate(system, test_loader)
+            continue
         else:
             state_dict = system.model.state_dict()
             system = NeRFSystem(hparams, train_set, ngp_model)

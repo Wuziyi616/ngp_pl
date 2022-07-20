@@ -48,9 +48,14 @@ def get_opts():
         default=16384,
         help='number of rays in a batch')
     parser.add_argument(
-        '--num_epochs', type=int, default=20, help='number of training epochs')
+        '--num_epochs', type=int, default=2, help='number of training epochs')
     parser.add_argument(
-        '--ft_num_epochs', type=float, default=5, help='number of FT epochs')
+        '--ft_num_epochs', type=float, default=0.2, help='number of FT epochs')
+    parser.add_argument(
+        '--def_num_epochs',
+        type=float,
+        default=1,
+        help='number of deformation epochs')
     parser.add_argument(
         '--num_gpus', type=int, default=1, help='number of gpus')
 
@@ -71,6 +76,10 @@ def get_opts():
         help='whether to save test image and video')
 
     parser.add_argument('--lr', type=float, default=2e-2, help='learning rate')
+    parser.add_argument(
+        '--ft_lr', type=float, default=1e-2, help='finetuning learning rate')
+    parser.add_argument(
+        '--def_lr', type=float, default=1e-3, help='deformation learning rate')
 
     parser.add_argument(
         '--exp_name', type=str, default='exp', help='experiment name')
