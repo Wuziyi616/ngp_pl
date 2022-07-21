@@ -57,6 +57,8 @@ def get_opts():
         default=1,
         help='number of deformation epochs')
     parser.add_argument(
+        '--ft_interval', type=float, default=4, help='keyframing interval')
+    parser.add_argument(
         '--num_gpus', type=int, default=1, help='number of gpus')
 
     parser.add_argument(

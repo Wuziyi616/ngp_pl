@@ -29,7 +29,6 @@ from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 # pytorch-lightning
 from pytorch_lightning.plugins import DDPPlugin
 from pytorch_lightning import LightningModule, Trainer
-from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.utilities.seed import seed_everything
 from pytorch_lightning.utilities.distributed import all_gather_ddp_if_available
 
@@ -70,13 +69,14 @@ class NeRFSystem(LightningModule):
 
     def forward(self, rays, split):
         kwargs = {'test_time': split != 'train'}
-        if hparams.dataset_name == 'colmap':
+        if self.hparams.dataset_name == 'colmap':
             kwargs['exp_step_factor'] = 1. / 256.
 
         return render(self.model, rays, **kwargs)
 
     def configure_optimizers(self):
-        self.opt = FusedAdam(self.model.parameters(), hparams.ft_lr, eps=1e-15)
+        self.opt = FusedAdam(
+            self.model.parameters(), self.hparams.ft_lr, eps=1e-15)
         return self.opt
 
     def on_train_start(self):
@@ -87,8 +87,7 @@ class NeRFSystem(LightningModule):
     def training_step(self, batch, batch_nb):
         if self.global_step % self.S == 0:
             self.model.update_density_grid(
-                hparams.alpha_threshold * MAX_SAMPLES / 3**0.5,
-                warmup=self.global_step < 256)
+                0.01 * MAX_SAMPLES / 3**0.5, warmup=self.global_step < 256)
 
         rays, rgb = batch['rays'], batch['rgb']
         results = self(rays, split='train')
@@ -110,8 +109,8 @@ class NeRFSystem(LightningModule):
 
     def on_validation_start(self):
         torch.cuda.empty_cache()
-        if not hparams.no_save_test:
-            self.val_dir = f'ckpts/{hparams.exp_name}/val'
+        if not self.hparams.no_save_test:
+            self.val_dir = f'ckpts/{self.hparams.exp_name}/val'
             os.makedirs(self.val_dir, exist_ok=True)
 
     def validation_step(self, batch, batch_nb):
@@ -136,14 +135,14 @@ class NeRFSystem(LightningModule):
         logs['lpips'] = self.val_lpips.compute()
         self.val_lpips.reset()
 
-        if not hparams.no_save_test:  # save test image to disk
+        if not self.hparams.no_save_test:  # save test image to disk
             idx = batch['idx']
             rgb_pred = rearrange(
                 results['rgb'].cpu().numpy(), '(h w) c -> h w c', h=h)
             rgb_pred = np.round(rgb_pred * 255.).astype(np.uint8)
             # depth = depth2img(
             #     rearrange(results['depth'].cpu().numpy(), '(h w) -> h w', h=h))
-            fn = f'{hparams.timestep}-{idx:03d}.png'
+            fn = f'{self.hparams.timestep}-{idx:03d}.png'
             imageio.imsave(os.path.join(self.val_dir, fn), rgb_pred)
             # imageio.imsave(
             #     os.path.join(self.val_dir, f'{idx:03d}_d.png'), depth)
@@ -171,7 +170,7 @@ class NeRFSystem(LightningModule):
         wandb.log(log_dict, step=step, commit=True)
 
 
-def build_trainer(hparams):
+def build_trainer(hparams, callbacks=None):
     return Trainer(
         max_steps=int(hparams.ft_num_epochs * 1000),
         check_val_every_n_epoch=1000000,  # no validation in timing
@@ -194,19 +193,11 @@ if __name__ == '__main__':
 
     dir_path = f'ckpts/{hparams.exp_name}'
     os.makedirs(dir_path, exist_ok=True)
-    ckpt_cb = ModelCheckpoint(
-        dirpath=dir_path,
-        filename='{epoch:d}',
-        save_weights_only=True,
-        every_n_epochs=hparams.num_epochs,
-        save_on_train_epoch_end=True,
-        save_top_k=-1,
-    )
-    callbacks = [ckpt_cb]
+    callbacks = None
 
     wandb.init(project='ngp_pl', name=hparams.exp_name, dir=dir_path)
 
-    trainer = build_trainer(hparams)
+    trainer = build_trainer(hparams, callbacks=callbacks)
 
     system = None
     for timestep in range(hparams.timestep_start, hparams.timestep_end):
@@ -227,7 +218,7 @@ if __name__ == '__main__':
             system = NeRFSystem(hparams, train_set)
             system.model.load_state_dict(state_dict)
             system.model.reset_density_field()
-            trainer = build_trainer(hparams)
+            trainer = build_trainer(hparams, callbacks=callbacks)
 
         start_t = time.time()
         trainer.fit(system, train_loader)

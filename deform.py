@@ -69,7 +69,7 @@ class NeRFSystem(LightningModule):
 
     def forward(self, rays, split):
         kwargs = {'test_time': split != 'train'}
-        if hparams.dataset_name == 'colmap':
+        if self.hparams.dataset_name == 'colmap':
             kwargs['exp_step_factor'] = 1. / 256.
 
         return render(self.model, rays, **kwargs)
@@ -77,7 +77,7 @@ class NeRFSystem(LightningModule):
     def configure_optimizers(self):
         self.opt = FusedAdam(
             filter(lambda p: p.requires_grad, self.model.parameters()),
-            hparams.def_lr,
+            self.hparams.def_lr,
             eps=1e-15)
         return self.opt
 
@@ -102,8 +102,8 @@ class NeRFSystem(LightningModule):
 
     def on_validation_start(self):
         torch.cuda.empty_cache()
-        if not hparams.no_save_test:
-            self.val_dir = f'ckpts/{hparams.exp_name}/val'
+        if not self.hparams.no_save_test:
+            self.val_dir = f'ckpts/{self.hparams.exp_name}/val'
             os.makedirs(self.val_dir, exist_ok=True)
 
     def validation_step(self, batch, batch_nb):
@@ -128,14 +128,14 @@ class NeRFSystem(LightningModule):
         logs['lpips'] = self.val_lpips.compute()
         self.val_lpips.reset()
 
-        if not hparams.no_save_test:  # save test image to disk
+        if not self.hparams.no_save_test:  # save test image to disk
             idx = batch['idx']
             rgb_pred = rearrange(
                 results['rgb'].cpu().numpy(), '(h w) c -> h w c', h=h)
             rgb_pred = np.round(rgb_pred * 255.).astype(np.uint8)
             # depth = depth2img(
             #     rearrange(results['depth'].cpu().numpy(), '(h w) -> h w', h=h))
-            fn = f'{hparams.timestep}-{idx:03d}.png'
+            fn = f'{self.hparams.timestep}-{idx:03d}.png'
             imageio.imsave(os.path.join(self.val_dir, fn), rgb_pred)
             # imageio.imsave(
             #     os.path.join(self.val_dir, f'{idx:03d}_d.png'), depth)
@@ -163,7 +163,7 @@ class NeRFSystem(LightningModule):
         wandb.log(log_dict, step=step, commit=True)
 
 
-def build_trainer(hparams):
+def build_trainer(hparams, callbacks=None):
     return Trainer(
         max_steps=int(hparams.def_num_epochs * 1000),
         check_val_every_n_epoch=1000000,  # no validation in timing
@@ -179,6 +179,12 @@ def build_trainer(hparams):
     )
 
 
+def get_ckpt(hparams):
+    ckpt = torch.load(hparams.ckpt_path, map_location='cpu')['state_dict']
+    ckpt = {k[6:]: v for k, v in ckpt.items() if k.startswith('model.')}
+    return ckpt
+
+
 if __name__ == '__main__':
     hparams = get_opts()
     if hparams.val_only and (not hparams.ckpt_path):
@@ -186,25 +192,15 @@ if __name__ == '__main__':
 
     dir_path = f'ckpts/{hparams.exp_name}'
     os.makedirs(dir_path, exist_ok=True)
-    ckpt_cb = ModelCheckpoint(
-        dirpath=dir_path,
-        filename='{epoch:d}',
-        save_weights_only=True,
-        every_n_epochs=hparams.num_epochs,
-        save_on_train_epoch_end=True,
-        save_top_k=-1,
-    )
-    callbacks = [ckpt_cb]
+    callbacks = None
 
     wandb.init(project='ngp_pl', name=hparams.exp_name, dir=dir_path)
 
-    trainer = build_trainer(hparams)
+    trainer = build_trainer(hparams, callbacks=callbacks)
 
     # pretrained NGP as template model
     ngp_model = NGP(scale=hparams.scale, black_bg=hparams.black_bg).eval()
-    ckpt = torch.load(hparams.ckpt_path, map_location='cpu')['state_dict']
-    ckpt = {k[6:]: v for k, v in ckpt.items() if k.startswith('model.')}
-    ngp_model.load_state_dict(ckpt)
+    ngp_model.load_state_dict(get_ckpt(hparams))
 
     system = None
     for timestep in range(hparams.timestep_start, hparams.timestep_end):
@@ -220,7 +216,7 @@ if __name__ == '__main__':
             state_dict = system.model.state_dict()
             system = NeRFSystem(hparams, train_set, ngp_model)
             system.model.load_state_dict(state_dict)
-            trainer = build_trainer(hparams)
+            trainer = build_trainer(hparams, callbacks=callbacks)
 
         start_t = time.time()
         trainer.fit(system, train_loader)
