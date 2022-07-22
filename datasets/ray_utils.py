@@ -175,3 +175,26 @@ def create_spheric_poses(radius, mean_h, n_poses=120):
     for th in np.linspace(0, 2*np.pi, n_poses+1)[:-1]:
         spheric_poses += [spheric_pose(th, -np.pi/12, radius)]
     return np.stack(spheric_poses, 0)
+
+
+def get_img_grids(H, W, K):
+    """
+    Get image pixels in camera coordinate [right down front].
+
+    Inputs:
+        H, W: image height and width
+        K: (3, 3) camera intrinsics
+
+    Outputs: (shape depends on @flatten)
+        uv: (H, W, 2) image coordinates
+    """
+    grid = create_meshgrid(H, W, False, device='cuda')[0]  # (H, W, 2)
+    u, v = grid.unbind(-1)
+
+    cx, cy = K[0, 2], K[1, 2]
+    img_grids = torch.stack([
+        (u - cx + 0.5),
+        (v - cy + 0.5),
+    ], -1)
+
+    return img_grids

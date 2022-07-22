@@ -13,7 +13,7 @@ def get_opts():
         '--dataset_name',
         type=str,
         default='nsvf',
-        choices=['nsvf', 'colmap', 'kubric'],
+        choices=['nsvf', 'colmap', 'kubric', 'kubric_flow'],
         help='which dataset to train/test')
     parser.add_argument(
         '--split',

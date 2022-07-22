@@ -98,7 +98,7 @@ class NeRFSystem(LightningModule):
             self.model.update_density_grid(
                 0.01 * MAX_SAMPLES / 3**0.5,
                 warmup=self.global_step < 256,
-                erode=hparams.dataset_name not in ['nsvf', 'kubric'])
+                erode=hparams.dataset_name == 'colmap')
 
         results = self(batch['rays'], split='train')
         loss_d = self.loss(results, batch, **{'step': self.global_step})

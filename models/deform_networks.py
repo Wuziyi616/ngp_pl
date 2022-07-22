@@ -146,6 +146,7 @@ class OffsetDeformNGP(DeformNGP):
             offsets: (N, 3)
             x': (N, 3), xyz after deformation
         """
+        x = x.detach()
         x = (x - self.xyz_min) / (self.xyz_max - self.xyz_min)
         dx = self.delta_xyz(x)  # sigmoid output
         dx = dx * 2. - 1.  # to [-1, 1]
@@ -174,6 +175,7 @@ class OffsetDeformNGP(DeformNGP):
 
         Outputs:
             offsets: (N, 3)
+            deform_x: (N, 3), x after deformation
             sigmas: (N)
             rgbs: (N, 3)
         """
@@ -182,4 +184,4 @@ class OffsetDeformNGP(DeformNGP):
         # d /= torch.norm(d, dim=-1, keepdim=True)
         d = self.ngp_model.dir_encoder((d + 1.) / 2.)
         rgbs = self.ngp_model.rgb_net(torch.cat([d, h], 1))
-        return offsets, sigmas, rgbs
+        return offsets, deform_x, sigmas, rgbs

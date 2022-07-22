@@ -82,9 +82,8 @@ class RayMarcher(torch.autograd.Function):
 
     @staticmethod
     @custom_fwd(cast_inputs=torch.float32)
-    def forward(ctx, rays_o, rays_d, hits_t,
-                density_bitfield, cascades, scale, exp_step_factor,
-                grid_size, max_samples):
+    def forward(ctx, rays_o, rays_d, hits_t, density_bitfield, cascades, scale,
+                exp_step_factor, grid_size, max_samples):
 
         # noise to perturb the first sample of each ray
         noise = torch.rand_like(rays_o[:, 0])
@@ -157,6 +156,7 @@ class DeformVolumeRenderer(torch.autograd.Function):
     Volume rendering with different number of samples per ray
 
     Inputs:
+        deformed_xyzs: (N, 3), deformed sample positions
         sigmas: (N)
         rgbs: (N, 3)
         deltas: (N)
@@ -176,12 +176,13 @@ class DeformVolumeRenderer(torch.autograd.Function):
 
     @staticmethod
     @custom_fwd(cast_inputs=torch.float32)
-    def forward(ctx, xyzs, offsets, sigmas, rgbs, deltas, ts, rays_a,
+    def forward(ctx, deformed_xyzs, sigmas, rgbs, deltas, ts, rays_a,
                 T_threshold, fx, fy):
-        flow, opacity, depth, rgb = vren.composite_train_deform_fw(
-            xyzs, offsets, sigmas, rgbs, deltas, ts, rays_a,
-            T_threshold, fx, fy)
-        ctx.save_for_backward(xyzs, offsets, sigmas, rgbs, deltas, ts, rays_a,
+        flow, opacity, depth, rgb = \
+            vren.composite_train_deform_fw(
+                deformed_xyzs, sigmas, rgbs, deltas, ts, rays_a,
+                T_threshold, fx, fy)
+        ctx.save_for_backward(deformed_xyzs, sigmas, rgbs, deltas, ts, rays_a,
                               flow, opacity, depth, rgb)
         ctx.T_threshold = T_threshold
         ctx.fx = fx
@@ -192,14 +193,14 @@ class DeformVolumeRenderer(torch.autograd.Function):
     @custom_bwd
     def backward(ctx, dL_dflow, dL_dopacity, dL_ddepth, dL_drgb):
         # TODO: currently flow is stop_grad to `dL_dsigmas`
-        xyzs, offsets, sigmas, rgbs, deltas, ts, rays_a, \
+        deformed_xyzs, sigmas, rgbs, deltas, ts, rays_a, \
             flow, opacity, depth, rgb = ctx.saved_tensors
-        dL_doffsets, dL_dsigmas, dL_drgbs = vren.composite_train_deform_bw(
-            dL_dflow, dL_dopacity, dL_ddepth, dL_drgb,
-            xyzs, offsets, sigmas, rgbs, deltas, ts, rays_a,
-            flow, opacity, depth, rgb,
-            ctx.T_threshold, ctx.fx, ctx.fy)
-        return None, dL_doffsets, dL_dsigmas, dL_drgbs, \
+        dL_ddeformed_xyzs, dL_dsigmas, dL_drgbs = \
+            vren.composite_train_deform_bw(
+                dL_dflow, dL_dopacity, dL_ddepth, dL_drgb, deformed_xyzs,
+                sigmas, rgbs, deltas, ts, rays_a, flow, opacity, depth, rgb,
+                ctx.T_threshold, ctx.fx, ctx.fy)
+        return dL_ddeformed_xyzs, dL_dsigmas, dL_drgbs, \
             None, None, None, None, None, None
 
 

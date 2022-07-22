@@ -108,8 +108,7 @@ void composite_test_fw_cu(
 
 
 std::vector<torch::Tensor> composite_train_deform_fw_cu(
-    const torch::Tensor xyzs,
-    const torch::Tensor offsets,
+    const torch::Tensor deformed_xyzs,
     const torch::Tensor sigmas,
     const torch::Tensor rgbs,
     const torch::Tensor deltas,
@@ -117,7 +116,7 @@ std::vector<torch::Tensor> composite_train_deform_fw_cu(
     const torch::Tensor rays_a,
     const float T_threshold,
     const float fx,  // focal length in x direction
-    const float fy,  // focal length in y direction
+    const float fy   // focal length in y direction
 );
 
 
@@ -126,8 +125,7 @@ std::vector<torch::Tensor> composite_train_deform_bw_cu(
     const torch::Tensor dL_dopacity,
     const torch::Tensor dL_ddepth,
     const torch::Tensor dL_drgb,
-    const torch::Tensor xyzs,
-    const torch::Tensor offsets,
+    const torch::Tensor deformed_xyzs,
     const torch::Tensor sigmas,
     const torch::Tensor rgbs,
     const torch::Tensor deltas,
@@ -144,8 +142,7 @@ std::vector<torch::Tensor> composite_train_deform_bw_cu(
 
 
 void composite_test_deform_fw_cu(
-    const torch::Tensor xyzs,
-    const torch::Tensor offsets,
+    const torch::Tensor deformed_xyzs,
     const torch::Tensor sigmas,
     const torch::Tensor rgbs,
     const torch::Tensor deltas,

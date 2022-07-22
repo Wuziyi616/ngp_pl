@@ -6,7 +6,7 @@ from .rendering import MAX_SAMPLES, NEAR_DISTANCE
 from .custom_functions import RayAABBIntersector, RayMarcher, DeformVolumeRenderer
 
 
-def deform_render(model, rays, **kwargs):
+def deform_render(model, rays, fx, wh, **kwargs):
     """
     Render rays by
     1. Compute the intersection of the rays with the scene bounding box
@@ -15,9 +15,11 @@ def deform_render(model, rays, **kwargs):
     Inputs:
         model: NGP
         rays: (N_rays, 3+3), ray origins and directions
+        fx: focal length of the camera
+        wh: (w, h) of the image
 
     Outputs:
-        result: dictionary containing final rgb and depth
+        result: dictionary containing final rgb, depth, opacity and flow
     """
 
     rays_o, rays_d = rays[:, 0:3].contiguous(), rays[:, 3:6].contiguous()
@@ -31,7 +33,13 @@ def deform_render(model, rays, **kwargs):
     else:
         render_func = __render_rays_train
 
-    results = render_func(model, rays_o, rays_d, hits_t, **kwargs)
+    results = render_func(model, rays_o, rays_d, hits_t, fx, **kwargs)
+    # TODO: normalize the flow
+    if 'flow' in results:
+        results['flow'] = torch.stack([
+            results['flow'][..., 0] / wh[0],
+            results['flow'][..., 1] / wh[1],
+        ], -1)
     for k, v in results.items():
         results[k] = v.cpu() if kwargs.get('to_cpu', False) else v
     return results
@@ -85,18 +93,20 @@ def __render_rays_test(model, rays_o, rays_d, hits_t, fx, **kwargs):
         if valid_mask.sum() == 0:
             break
 
-        offsets = torch.zeros(len(xyzs), 3, device=device)
+        deform_xyzs = torch.zeros(len(xyzs), 3, device=device)
         sigmas = torch.zeros(len(xyzs), device=device)
         rgbs = torch.zeros(len(xyzs), 3, device=device)
-        _offsets, _sigmas, _rgbs = model(xyzs[valid_mask], dirs[valid_mask])
-        offsets[valid_mask], sigmas[valid_mask], rgbs[valid_mask] = \
-            _offsets.float(), _sigmas.float(), _rgbs.float()
+        _, _deform_xyzs, _sigmas, _rgbs = \
+            model(xyzs[valid_mask], dirs[valid_mask])
+        deform_xyzs[valid_mask], sigmas[valid_mask], rgbs[valid_mask] = \
+            _deform_xyzs.float(), _sigmas.float(), _rgbs.float()
         xyzs = rearrange(xyzs, '(n1 n2) c -> n1 n2 c', n2=N_samples)
-        offsets = rearrange(offsets, '(n1 n2) c -> n1 n2 c', n2=N_samples)
+        deform_xyzs = rearrange(
+            deform_xyzs, '(n1 n2) c -> n1 n2 c', n2=N_samples)
         sigmas = rearrange(sigmas, '(n1 n2) -> n1 n2', n2=N_samples)
         rgbs = rearrange(rgbs, '(n1 n2) c -> n1 n2 c', n2=N_samples)
 
-        vren.composite_test_deform_fw(xyzs, offsets, sigmas, rgbs, deltas, ts,
+        vren.composite_test_deform_fw(deform_xyzs, sigmas, rgbs, deltas, ts,
                                       hits_t[:, 0], alive_indices, T_threshold,
                                       fx, fy, N_eff_samples, flow, opacity,
                                       depth, rgb)
@@ -132,11 +142,11 @@ def __render_rays_train(model, rays_o, rays_d, hits_t, fx, **kwargs):
             model.cascades, model.scale,
             kwargs.get('exp_step_factor', 0.), model.grid_size, MAX_SAMPLES)
 
-    offsets, sigmas, rgbs = model(xyzs, dirs)
+    _, deform_xyzs, sigmas, rgbs = model(xyzs, dirs)
 
     results['flow'], results['opacity'], results['depth'], rgb = \
         DeformVolumeRenderer.apply(
-            xyzs, offsets, sigmas, rgbs.contiguous(), deltas, ts, rays_a,
+            deform_xyzs, sigmas, rgbs.contiguous(), deltas, ts, rays_a,
             kwargs.get('T_threshold', 1e-4), fx, kwargs.get('fy', fx))
 
     rgb_bg = torch.ones(3, device=rays_o.device) * model.bg_color
