@@ -105,3 +105,59 @@ void composite_test_fw_cu(
     torch::Tensor depth,
     torch::Tensor rgb
 );
+
+
+std::vector<torch::Tensor> composite_train_deform_fw_cu(
+    const torch::Tensor xyzs,
+    const torch::Tensor offsets,
+    const torch::Tensor sigmas,
+    const torch::Tensor rgbs,
+    const torch::Tensor deltas,
+    const torch::Tensor ts,
+    const torch::Tensor rays_a,
+    const float T_threshold,
+    const float fx,  // focal length in x direction
+    const float fy,  // focal length in y direction
+);
+
+
+std::vector<torch::Tensor> composite_train_deform_bw_cu(
+    const torch::Tensor dL_dflow,
+    const torch::Tensor dL_dopacity,
+    const torch::Tensor dL_ddepth,
+    const torch::Tensor dL_drgb,
+    const torch::Tensor xyzs,
+    const torch::Tensor offsets,
+    const torch::Tensor sigmas,
+    const torch::Tensor rgbs,
+    const torch::Tensor deltas,
+    const torch::Tensor ts,
+    const torch::Tensor rays_a,
+    const torch::Tensor flow,
+    const torch::Tensor opacity,
+    const torch::Tensor depth,
+    const torch::Tensor rgb,
+    const float T_threshold,
+    const float fx,
+    const float fy
+);
+
+
+void composite_test_deform_fw_cu(
+    const torch::Tensor xyzs,
+    const torch::Tensor offsets,
+    const torch::Tensor sigmas,
+    const torch::Tensor rgbs,
+    const torch::Tensor deltas,
+    const torch::Tensor ts,
+    const torch::Tensor hits_t,
+    const torch::Tensor alive_indices,
+    const float T_threshold,
+    const float fx,
+    const float fy,
+    const torch::Tensor N_eff_samples,
+    torch::Tensor flow,
+    torch::Tensor opacity,
+    torch::Tensor depth,
+    torch::Tensor rgb
+);

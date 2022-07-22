@@ -152,6 +152,57 @@ class VolumeRenderer(torch.autograd.Function):
         return dL_dsigmas, dL_drgbs, None, None, None, None
 
 
+class DeformVolumeRenderer(torch.autograd.Function):
+    """
+    Volume rendering with different number of samples per ray
+
+    Inputs:
+        sigmas: (N)
+        rgbs: (N, 3)
+        deltas: (N)
+        ts: (N)
+        rays_a: (N_rays, 3) ray_idx, start_idx, N_samples
+                meaning each entry corresponds to the @ray_idx th ray,
+                whose samples are [start_idx:start_idx+N_samples]
+        T_threshold: float, stop the ray if the transmittance is below it
+
+    Outputs:
+        flow: (N_rays, 2), [deform_x, deform_y] in pinhole camera format
+            i.e. [y - W/2 + 0.5 + dy, x - H/2 + 0.5 + dx] in image space
+        opacity: (N_rays)
+        depth: (N_rays)
+        rgb: (N_rays, 3)
+    """
+
+    @staticmethod
+    @custom_fwd(cast_inputs=torch.float32)
+    def forward(ctx, xyzs, offsets, sigmas, rgbs, deltas, ts, rays_a,
+                T_threshold, fx, fy):
+        flow, opacity, depth, rgb = vren.composite_train_deform_fw(
+            xyzs, offsets, sigmas, rgbs, deltas, ts, rays_a,
+            T_threshold, fx, fy)
+        ctx.save_for_backward(xyzs, offsets, sigmas, rgbs, deltas, ts, rays_a,
+                              flow, opacity, depth, rgb)
+        ctx.T_threshold = T_threshold
+        ctx.fx = fx
+        ctx.fy = fy
+        return flow, opacity, depth, rgb
+
+    @staticmethod
+    @custom_bwd
+    def backward(ctx, dL_dflow, dL_dopacity, dL_ddepth, dL_drgb):
+        # TODO: currently flow is stop_grad to `dL_dsigmas`
+        xyzs, offsets, sigmas, rgbs, deltas, ts, rays_a, \
+            flow, opacity, depth, rgb = ctx.saved_tensors
+        dL_doffsets, dL_dsigmas, dL_drgbs = vren.composite_train_deform_bw(
+            dL_dflow, dL_dopacity, dL_ddepth, dL_drgb,
+            xyzs, offsets, sigmas, rgbs, deltas, ts, rays_a,
+            flow, opacity, depth, rgb,
+            ctx.T_threshold, ctx.fx, ctx.fy)
+        return None, dL_doffsets, dL_dsigmas, dL_drgbs, \
+            None, None, None, None, None, None
+
+
 class TruncExp(torch.autograd.Function):
 
     @staticmethod

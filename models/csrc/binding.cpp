@@ -194,6 +194,113 @@ void composite_test_fw(
 }
 
 
+std::vector<torch::Tensor> composite_train_deform_fw(
+    const torch::Tensor xyzs,
+    const torch::Tensor offsets,
+    const torch::Tensor sigmas,
+    const torch::Tensor rgbs,
+    const torch::Tensor deltas,
+    const torch::Tensor ts,
+    const torch::Tensor rays_a,
+    const float opacity_threshold,
+    const float fx,
+    const float fy
+){
+    CHECK_INPUT(xyzs);
+    CHECK_INPUT(offsets);
+    CHECK_INPUT(sigmas);
+    CHECK_INPUT(rgbs);
+    CHECK_INPUT(deltas);
+    CHECK_INPUT(ts);
+    CHECK_INPUT(rays_a);
+
+    return composite_train_deform_fw_cu(
+                xyzs, offsets, sigmas, rgbs, deltas, ts,
+                rays_a, opacity_threshold, fx, fy);
+}
+
+
+std::vector<torch::Tensor> composite_train_deform_bw(
+    const torch::Tensor dL_dflow,
+    const torch::Tensor dL_dopacity,
+    const torch::Tensor dL_ddepth,
+    const torch::Tensor dL_drgb,
+    const torch::Tensor xyzs,
+    const torch::Tensor offsets,
+    const torch::Tensor sigmas,
+    const torch::Tensor rgbs,
+    const torch::Tensor deltas,
+    const torch::Tensor ts,
+    const torch::Tensor rays_a,
+    const torch::Tensor flow,
+    const torch::Tensor opacity,
+    const torch::Tensor depth,
+    const torch::Tensor rgb,
+    const float opacity_threshold,
+    const float fx,
+    const float fy
+){
+    CHECK_INPUT(dL_dflow);
+    CHECK_INPUT(dL_dopacity);
+    CHECK_INPUT(dL_ddepth);
+    CHECK_INPUT(dL_drgb);
+    CHECK_INPUT(xyzs);
+    CHECK_INPUT(offsets);
+    CHECK_INPUT(sigmas);
+    CHECK_INPUT(rgbs);
+    CHECK_INPUT(deltas);
+    CHECK_INPUT(ts);
+    CHECK_INPUT(rays_a);
+    CHECK_INPUT(opacity);
+    CHECK_INPUT(depth);
+    CHECK_INPUT(rgb);
+
+    return composite_train_deform_bw_cu(
+                dL_dflow, dL_dopacity, dL_ddepth, dL_drgb,
+                xyzs, offsets, sigmas, rgbs, deltas, ts, rays_a,
+                opacity, depth, rgb, opacity_threshold, fx, fy);
+}
+
+
+void composite_test_deform_fw(
+    const torch::Tensor xyzs,
+    const torch::Tensor offsets,
+    const torch::Tensor sigmas,
+    const torch::Tensor rgbs,
+    const torch::Tensor deltas,
+    const torch::Tensor ts,
+    const torch::Tensor hits_t,
+    const torch::Tensor alive_indices,
+    const float T_threshold,
+    const float fx,
+    const float fy,
+    const torch::Tensor N_eff_samples,
+    torch::Tensor flow,
+    torch::Tensor opacity,
+    torch::Tensor depth,
+    torch::Tensor rgb
+){
+    CHECK_INPUT(xyzs);
+    CHECK_INPUT(offsets);
+    CHECK_INPUT(sigmas);
+    CHECK_INPUT(rgbs);
+    CHECK_INPUT(deltas);
+    CHECK_INPUT(ts);
+    CHECK_INPUT(hits_t);
+    CHECK_INPUT(alive_indices);
+    CHECK_INPUT(N_eff_samples);
+    CHECK_INPUT(flow);
+    CHECK_INPUT(opacity);
+    CHECK_INPUT(depth);
+    CHECK_INPUT(rgb);
+
+    composite_test_deform_fw_cu(
+        xyzs, offsets, sigmas, rgbs, deltas, ts, hits_t, alive_indices,
+        T_threshold, fx, fy, N_eff_samples,
+        flow, opacity, depth, rgb);
+}
+
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m){
     m.def("ray_aabb_intersect", &ray_aabb_intersect);
     m.def("ray_sphere_intersect", &ray_sphere_intersect);
@@ -207,5 +314,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m){
     m.def("composite_train_fw", &composite_train_fw);
     m.def("composite_train_bw", &composite_train_bw);
     m.def("composite_test_fw", &composite_test_fw);
+
+    m.def("composite_train_deform_fw", &composite_train_deform_fw);
+    m.def("composite_train_deform_bw", &composite_train_deform_bw);
+    m.def("composite_test_deform_fw", &composite_test_deform_fw);
 
 }
