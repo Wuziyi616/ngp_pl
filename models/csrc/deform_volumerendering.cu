@@ -9,6 +9,7 @@ __global__ void composite_train_deform_fw_kernel(
     const torch::PackedTensorAccessor<scalar_t, 1, torch::RestrictPtrTraits, size_t> deltas,
     const torch::PackedTensorAccessor<scalar_t, 1, torch::RestrictPtrTraits, size_t> ts,
     const torch::PackedTensorAccessor32<int, 2, torch::RestrictPtrTraits> rays_a,
+    const torch::PackedTensorAccessor32<scalar_t, 2, torch::RestrictPtrTraits> camera,
     const scalar_t T_threshold,
     const scalar_t fx,
     const scalar_t fy,
@@ -22,6 +23,12 @@ __global__ void composite_train_deform_fw_kernel(
 
     const int ray_idx = rays_a[n][0], start_idx = rays_a[n][1], N_samples = rays_a[n][2];
 
+    // w2c transformation
+    const scalar_t r1 = camera[ray_idx][0], r2 = camera[ray_idx][1], r3 = camera[ray_idx][2];
+    const scalar_t r4 = camera[ray_idx][4], r5 = camera[ray_idx][5], r6 = camera[ray_idx][6];
+    const scalar_t r7 = camera[ray_idx][8], r8 = camera[ray_idx][9], r9 = camera[ray_idx][10];
+    const scalar_t t1 = camera[ray_idx][3], t2 = camera[ray_idx][7], t3 = camera[ray_idx][11];
+
     // front to back compositing
     int samples = 0; scalar_t T = 1.0f;
 
@@ -30,9 +37,13 @@ __global__ void composite_train_deform_fw_kernel(
         const scalar_t a = 1.0f - __expf(-sigmas[s]*deltas[s]);
         const scalar_t w = a * T;
 
-        // dx = f * (X + U) / (Z + W), dy = f * (Y + V) / (Z + W)
-        flow[ray_idx][0] += w * fx * deformed_xyzs[s][0] / deformed_xyzs[s][2];
-        flow[ray_idx][1] += w * fy * deformed_xyzs[s][1] / deformed_xyzs[s][2];
+        // x = f * X / Z, y = f * Y / Z
+        const scalar_t x = deformed_xyzs[s][0], y = deformed_xyzs[s][1], z = deformed_xyzs[s][2];
+        const scalar_t w2c_x = r1 * x + r2 * y + r3 * z + t1;
+        const scalar_t w2c_y = r4 * x + r5 * y + r6 * z + t2;
+        const scalar_t w2c_z = r7 * x + r8 * y + r9 * z + t3;
+        flow[ray_idx][0] += w * fx * w2c_x / w2c_z;
+        flow[ray_idx][1] += w * fy * w2c_y / w2c_z;
 
         rgb[ray_idx][0] += w*rgbs[s][0];
         rgb[ray_idx][1] += w*rgbs[s][1];
@@ -54,6 +65,7 @@ std::vector<torch::Tensor> composite_train_deform_fw_cu(
     const torch::Tensor deltas,
     const torch::Tensor ts,
     const torch::Tensor rays_a,
+    const torch::Tensor camera,
     const float T_threshold,
     const float fx,
     const float fy
@@ -76,6 +88,7 @@ std::vector<torch::Tensor> composite_train_deform_fw_cu(
             deltas.packed_accessor<scalar_t, 1, torch::RestrictPtrTraits, size_t>(),
             ts.packed_accessor<scalar_t, 1, torch::RestrictPtrTraits, size_t>(),
             rays_a.packed_accessor32<int, 2, torch::RestrictPtrTraits>(),
+            camera.packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
             T_threshold,
             fx,
             fy,
@@ -102,6 +115,7 @@ __global__ void composite_train_deform_bw_kernel(
     const torch::PackedTensorAccessor<scalar_t, 1, torch::RestrictPtrTraits, size_t> deltas,
     const torch::PackedTensorAccessor<scalar_t, 1, torch::RestrictPtrTraits, size_t> ts,
     const torch::PackedTensorAccessor32<int, 2, torch::RestrictPtrTraits> rays_a,
+    const torch::PackedTensorAccessor32<scalar_t, 2, torch::RestrictPtrTraits> camera,
     const torch::PackedTensorAccessor<scalar_t, 2, torch::RestrictPtrTraits, size_t> flow,
     const torch::PackedTensorAccessor<scalar_t, 1, torch::RestrictPtrTraits, size_t> opacity,
     const torch::PackedTensorAccessor<scalar_t, 1, torch::RestrictPtrTraits, size_t> depth,
@@ -117,6 +131,12 @@ __global__ void composite_train_deform_bw_kernel(
     if (n >= opacity.size(0)) return;
 
     const int ray_idx = rays_a[n][0], start_idx = rays_a[n][1], N_samples = rays_a[n][2];
+
+    // w2c transformation
+    const scalar_t r1 = camera[ray_idx][0], r2 = camera[ray_idx][1], r3 = camera[ray_idx][2];
+    const scalar_t r4 = camera[ray_idx][4], r5 = camera[ray_idx][5], r6 = camera[ray_idx][6];
+    const scalar_t r7 = camera[ray_idx][8], r8 = camera[ray_idx][9], r9 = camera[ray_idx][10];
+    const scalar_t t1 = camera[ray_idx][3], t2 = camera[ray_idx][7], t3 = camera[ray_idx][11];
 
     // front to back compositing
     int samples = 0;
@@ -134,20 +154,18 @@ __global__ void composite_train_deform_bw_kernel(
         T *= 1.0f-a;
 
         // compute gradients by math...
-        // dL_doff[0] = dL_dflow[0] * dflow[0]_doff[0]
-        //     dflow[0]_doff[0] = w * fx / (z + off[2])
-        // dL_doff[1] = dL_dflow[1] * dflow[1]_doff[1]
-        //     dflow[1]_doff[1] = w * fy / (z + off[2])
-        // dL_doff[2] = dL_dflow[0] * dflow[0]_doff[2] + dL_dflow[1] * dflow[1]_doff[2]
-        //     dflow[0]_doff[2] = -w * fx * (x + off[0]) / (z + off[2])^2
-        //     dflow[1]_doff[2] = -w * fy * (y + off[1]) / (z + off[2])^2
-        const scalar_t deform_z_2 = deformed_xyzs[s][2] * deformed_xyzs[s][2];
-        dL_ddeformed_xyzs[s][0] = dL_dflow[ray_idx][0] * w * fx / deformed_xyzs[s][2];
-        dL_ddeformed_xyzs[s][1] = dL_dflow[ray_idx][1] * w * fy / deformed_xyzs[s][2];
-        dL_ddeformed_xyzs[s][2] = -(
-            dL_dflow[ray_idx][0] * w * fx * deformed_xyzs[s][0] / deform_z_2 +
-            dL_dflow[ray_idx][1] * w * fy * deformed_xyzs[s][1] / deform_z_2
-        );
+        const scalar_t x = deformed_xyzs[s][0], y = deformed_xyzs[s][1], z = deformed_xyzs[s][2];
+        const scalar_t w2c_x = r1 * x + r2 * y + r3 * z + t1;
+        const scalar_t w2c_y = r4 * x + r5 * y + r6 * z + t2;
+        const scalar_t w2c_z = r7 * x + r8 * y + r9 * z + t3;
+        const scalar_t w2c_z_2 = w2c_z * w2c_z;
+
+        dL_ddeformed_xyzs[s][0] = dL_dflow[ray_idx][0] * w * fx * (r1 / w2c_z - r7 * w2c_x / w2c_z_2) +
+                                  dL_dflow[ray_idx][1] * w * fy * (r4 / w2c_z - r7 * w2c_y / w2c_z_2);
+        dL_ddeformed_xyzs[s][1] = dL_dflow[ray_idx][0] * w * fx * (r2 / w2c_z - r8 * w2c_x / w2c_z_2) +
+                                  dL_dflow[ray_idx][1] * w * fy * (r5 / w2c_z - r8 * w2c_y / w2c_z_2);
+        dL_ddeformed_xyzs[s][2] = dL_dflow[ray_idx][0] * w * fx * (r3 / w2c_z - r9 * w2c_x / w2c_z_2) +
+                                  dL_dflow[ray_idx][1] * w * fy * (r6 / w2c_z - r9 * w2c_y / w2c_z_2);
 
         dL_drgbs[s][0] = dL_drgb[ray_idx][0]*w;
         dL_drgbs[s][1] = dL_drgb[ray_idx][1]*w;
@@ -181,6 +199,7 @@ std::vector<torch::Tensor> composite_train_deform_bw_cu(
     const torch::Tensor deltas,
     const torch::Tensor ts,
     const torch::Tensor rays_a,
+    const torch::Tensor camera,
     const torch::Tensor flow,
     const torch::Tensor opacity,
     const torch::Tensor depth,
@@ -210,6 +229,7 @@ std::vector<torch::Tensor> composite_train_deform_bw_cu(
             deltas.packed_accessor<scalar_t, 1, torch::RestrictPtrTraits, size_t>(),
             ts.packed_accessor<scalar_t, 1, torch::RestrictPtrTraits, size_t>(),
             rays_a.packed_accessor32<int, 2, torch::RestrictPtrTraits>(),
+            camera.packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
             flow.packed_accessor<scalar_t, 2, torch::RestrictPtrTraits, size_t>(),
             opacity.packed_accessor<scalar_t, 1, torch::RestrictPtrTraits, size_t>(),
             depth.packed_accessor<scalar_t, 1, torch::RestrictPtrTraits, size_t>(),
@@ -236,6 +256,7 @@ __global__ void composite_test_deform_fw_kernel(
     const torch::PackedTensorAccessor<scalar_t, 2, torch::RestrictPtrTraits, size_t> ts,
     const torch::PackedTensorAccessor<scalar_t, 2, torch::RestrictPtrTraits, size_t> hits_t,
     torch::PackedTensorAccessor64<long, 1, torch::RestrictPtrTraits> alive_indices,
+    const torch::PackedTensorAccessor64<scalar_t, 1, torch::RestrictPtrTraits> camera,
     const scalar_t T_threshold,
     const scalar_t fx,
     const scalar_t fy,
@@ -255,6 +276,12 @@ __global__ void composite_test_deform_fw_kernel(
 
     const size_t r = alive_indices[n]; // ray index
 
+    // w2c transformation
+    const scalar_t r1 = camera[0], r2 = camera[1], r3 = camera[2];
+    const scalar_t r4 = camera[4], r5 = camera[5], r6 = camera[6];
+    const scalar_t r7 = camera[8], r8 = camera[9], r9 = camera[10];
+    const scalar_t t1 = camera[3], t2 = camera[7], t3 = camera[11];
+
     // front to back compositing
     int s = 0; scalar_t T = 1-opacity[r];
 
@@ -262,9 +289,13 @@ __global__ void composite_test_deform_fw_kernel(
         const scalar_t a = 1.0f - __expf(-sigmas[n][s]*deltas[n][s]);
         const scalar_t w = a * T;
 
-        // dx = f * (X + U) / (Z + W), dy = f * (Y + V) / (Z + W)
-        flow[r][0] += w * fx * deformed_xyzs[n][s][0] / deformed_xyzs[n][s][2];
-        flow[r][1] += w * fy * deformed_xyzs[n][s][1] / deformed_xyzs[n][s][2];
+        // x = f * X / Z, y = f * Y / Z
+        const scalar_t x = deformed_xyzs[n][s][0], y = deformed_xyzs[n][s][1], z = deformed_xyzs[n][s][2];
+        const scalar_t w2c_x = r1 * x + r2 * y + r3 * z + t1;
+        const scalar_t w2c_y = r4 * x + r5 * y + r6 * z + t2;
+        const scalar_t w2c_z = r7 * x + r8 * y + r9 * z + t3;
+        flow[r][0] += w * fx * w2c_x / w2c_z;
+        flow[r][1] += w * fy * w2c_y / w2c_z;
 
         rgb[r][0] += w*rgbs[n][s][0];
         rgb[r][1] += w*rgbs[n][s][1];
@@ -290,6 +321,7 @@ void composite_test_deform_fw_cu(
     const torch::Tensor ts,
     const torch::Tensor hits_t,
     torch::Tensor alive_indices,
+    const torch::Tensor camera,
     const float T_threshold,
     const float fx,
     const float fy,
@@ -313,6 +345,7 @@ void composite_test_deform_fw_cu(
             ts.packed_accessor<scalar_t, 2, torch::RestrictPtrTraits, size_t>(),
             hits_t.packed_accessor<scalar_t, 2, torch::RestrictPtrTraits, size_t>(),
             alive_indices.packed_accessor64<long, 1, torch::RestrictPtrTraits>(),
+            camera.packed_accessor64<scalar_t, 1, torch::RestrictPtrTraits>(),
             T_threshold,
             fx,
             fy,

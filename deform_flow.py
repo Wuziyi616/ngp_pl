@@ -71,7 +71,7 @@ class NeRFSystem(LightningModule):
 
         self.model = OffsetDeformNGP(ngp_model=ngp_model)
 
-    def forward(self, rays, split):
+    def forward(self, rays, w2c, split):
         kwargs = {'test_time': split != 'train'}
         if self.hparams.dataset_name == 'colmap':
             kwargs['exp_step_factor'] = 1. / 256.
@@ -79,6 +79,7 @@ class NeRFSystem(LightningModule):
         return deform_render(
             self.model,
             rays,
+            w2c=w2c,
             fx=self.train_dataset.fx,
             fy=self.train_dataset.fy,
             wh=self.train_dataset.img_wh,
@@ -93,8 +94,9 @@ class NeRFSystem(LightningModule):
         return self.opt
 
     def training_step(self, batch, batch_nb):
-        rays, rgb, flow = batch['rays'], batch['rgb'], batch['flow']
-        results = self(rays, split='train')
+        rays, rgb, flow, w2c = \
+            batch['rays'], batch['rgb'], batch['flow'], batch['w2c']
+        results = self(rays, w2c=w2c, split='train')
         loss_d = self.loss(results, rgb, flow=flow)
         loss = sum(lo.mean() for lo in loss_d.values())
 
@@ -122,8 +124,9 @@ class NeRFSystem(LightningModule):
             os.makedirs(self.val_dir, exist_ok=True)
 
     def validation_step(self, batch, batch_nb):
-        rays, rgb_gt, flow_gt = batch['rays'], batch['rgb'], batch['flow']
-        results = self(rays, split='test')
+        rays, rgb_gt, flow_gt, w2c = \
+            batch['rays'], batch['rgb'], batch['flow'], batch['w2c']
+        results = self(rays, w2c=w2c, split='test')
 
         logs = {}
         # compute each metric per image

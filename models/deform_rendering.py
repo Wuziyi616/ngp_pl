@@ -6,15 +6,16 @@ from .rendering import MAX_SAMPLES, NEAR_DISTANCE
 from .custom_functions import RayAABBIntersector, RayMarcher, DeformVolumeRenderer
 
 
-def deform_render(model, rays, fx, wh, **kwargs):
+def deform_render(model, rays, w2c, fx, wh, **kwargs):
     """
     Render rays by
     1. Compute the intersection of the rays with the scene bounding box
     2. Follow the process in @render_func (different for train/test)
 
     Inputs:
-        model: NGP
+        model: DeformNGP
         rays: (N_rays, 3+3), ray origins and directions
+        w2c: (N_rays, 3*4), world to camera transformation matrix
         fx: focal length of the camera
         wh: (w, h) of the image
 
@@ -33,7 +34,7 @@ def deform_render(model, rays, fx, wh, **kwargs):
     else:
         render_func = __render_rays_train
 
-    results = render_func(model, rays_o, rays_d, hits_t, fx, **kwargs)
+    results = render_func(model, rays_o, rays_d, hits_t, w2c, fx, **kwargs)
     # TODO: normalize the flow
     if 'flow' in results:
         results['flow'] = torch.stack([
@@ -46,7 +47,7 @@ def deform_render(model, rays, fx, wh, **kwargs):
 
 
 @torch.no_grad()
-def __render_rays_test(model, rays_o, rays_d, hits_t, fx, **kwargs):
+def __render_rays_test(model, rays_o, rays_d, hits_t, w2c, fx, **kwargs):
     """
     Render rays by
 
@@ -107,9 +108,9 @@ def __render_rays_test(model, rays_o, rays_d, hits_t, fx, **kwargs):
         rgbs = rearrange(rgbs, '(n1 n2) c -> n1 n2 c', n2=N_samples)
 
         vren.composite_test_deform_fw(deform_xyzs, sigmas, rgbs, deltas, ts,
-                                      hits_t[:, 0], alive_indices, T_threshold,
-                                      fx, fy, N_eff_samples, flow, opacity,
-                                      depth, rgb)
+                                      hits_t[:, 0], alive_indices, w2c,
+                                      T_threshold, fx, fy, N_eff_samples, flow,
+                                      opacity, depth, rgb)
         # remove converged rays
         alive_indices = alive_indices[alive_indices >= 0]
 
@@ -123,7 +124,7 @@ def __render_rays_test(model, rays_o, rays_d, hits_t, fx, **kwargs):
 
 
 @torch.cuda.amp.autocast()
-def __render_rays_train(model, rays_o, rays_d, hits_t, fx, **kwargs):
+def __render_rays_train(model, rays_o, rays_d, hits_t, w2c, fx, **kwargs):
     """
     Render rays by
     1. March the rays along their directions, querying @density_bitfield
@@ -146,7 +147,7 @@ def __render_rays_train(model, rays_o, rays_d, hits_t, fx, **kwargs):
 
     results['flow'], results['opacity'], results['depth'], rgb = \
         DeformVolumeRenderer.apply(
-            deform_xyzs, sigmas, rgbs.contiguous(), deltas, ts, rays_a,
+            deform_xyzs, sigmas, rgbs.contiguous(), deltas, ts, rays_a, w2c,
             kwargs.get('T_threshold', 1e-4), fx, kwargs.get('fy', fx))
 
     rgb_bg = torch.ones(3, device=rays_o.device) * model.bg_color

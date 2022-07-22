@@ -198,3 +198,19 @@ def get_img_grids(H, W, K):
     ], -1)
 
     return img_grids
+
+
+def inverse_c2w(c2w):
+    """
+    Get w2c from c2w.
+
+    Inputs:
+        c2w: (3, 4) transformation matrix from camera coordinate to world coordinate
+
+    Outputs:
+        w2c: (3, 4)
+    """
+    rmat = c2w[:, :3]
+    tvec = c2w[:, 3:4]
+    w2c = torch.cat([rmat.T, -rmat.T @ tvec], dim=-1)
+    return w2c

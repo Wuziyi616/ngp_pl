@@ -201,6 +201,7 @@ std::vector<torch::Tensor> composite_train_deform_fw(
     const torch::Tensor deltas,
     const torch::Tensor ts,
     const torch::Tensor rays_a,
+    const torch::Tensor camera,
     const float opacity_threshold,
     const float fx,
     const float fy
@@ -211,10 +212,11 @@ std::vector<torch::Tensor> composite_train_deform_fw(
     CHECK_INPUT(deltas);
     CHECK_INPUT(ts);
     CHECK_INPUT(rays_a);
+    CHECK_INPUT(camera);
 
     return composite_train_deform_fw_cu(
                 deformed_xyzs, sigmas, rgbs, deltas, ts,
-                rays_a, opacity_threshold, fx, fy);
+                rays_a, camera, opacity_threshold, fx, fy);
 }
 
 
@@ -229,6 +231,7 @@ std::vector<torch::Tensor> composite_train_deform_bw(
     const torch::Tensor deltas,
     const torch::Tensor ts,
     const torch::Tensor rays_a,
+    const torch::Tensor camera,
     const torch::Tensor flow,
     const torch::Tensor opacity,
     const torch::Tensor depth,
@@ -247,13 +250,14 @@ std::vector<torch::Tensor> composite_train_deform_bw(
     CHECK_INPUT(deltas);
     CHECK_INPUT(ts);
     CHECK_INPUT(rays_a);
+    CHECK_INPUT(camera);
     CHECK_INPUT(opacity);
     CHECK_INPUT(depth);
     CHECK_INPUT(rgb);
 
     return composite_train_deform_bw_cu(
                 dL_dflow, dL_dopacity, dL_ddepth, dL_drgb,
-                deformed_xyzs, sigmas, rgbs, deltas, ts, rays_a,
+                deformed_xyzs, sigmas, rgbs, deltas, ts, rays_a, camera,
                 flow, opacity, depth, rgb, opacity_threshold, fx, fy);
 }
 
@@ -266,6 +270,7 @@ void composite_test_deform_fw(
     const torch::Tensor ts,
     const torch::Tensor hits_t,
     const torch::Tensor alive_indices,
+    const torch::Tensor camera,
     const float T_threshold,
     const float fx,
     const float fy,
@@ -282,6 +287,7 @@ void composite_test_deform_fw(
     CHECK_INPUT(ts);
     CHECK_INPUT(hits_t);
     CHECK_INPUT(alive_indices);
+    CHECK_INPUT(camera);
     CHECK_INPUT(N_eff_samples);
     CHECK_INPUT(flow);
     CHECK_INPUT(opacity);
@@ -289,7 +295,7 @@ void composite_test_deform_fw(
     CHECK_INPUT(rgb);
 
     composite_test_deform_fw_cu(
-        deformed_xyzs, sigmas, rgbs, deltas, ts, hits_t, alive_indices,
+        deformed_xyzs, sigmas, rgbs, deltas, ts, hits_t, alive_indices, camera,
         T_threshold, fx, fy, N_eff_samples,
         flow, opacity, depth, rgb);
 }

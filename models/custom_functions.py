@@ -164,6 +164,7 @@ class DeformVolumeRenderer(torch.autograd.Function):
         rays_a: (N_rays, 3) ray_idx, start_idx, N_samples
                 meaning each entry corresponds to the @ray_idx th ray,
                 whose samples are [start_idx:start_idx+N_samples]
+        w2c: (N_rays, 3*4) world to camera transformation matrix
         T_threshold: float, stop the ray if the transmittance is below it
 
     Outputs:
@@ -176,14 +177,14 @@ class DeformVolumeRenderer(torch.autograd.Function):
 
     @staticmethod
     @custom_fwd(cast_inputs=torch.float32)
-    def forward(ctx, deformed_xyzs, sigmas, rgbs, deltas, ts, rays_a,
+    def forward(ctx, deformed_xyzs, sigmas, rgbs, deltas, ts, rays_a, w2c,
                 T_threshold, fx, fy):
         flow, opacity, depth, rgb = \
             vren.composite_train_deform_fw(
-                deformed_xyzs, sigmas, rgbs, deltas, ts, rays_a,
+                deformed_xyzs, sigmas, rgbs, deltas, ts, rays_a, w2c,
                 T_threshold, fx, fy)
         ctx.save_for_backward(deformed_xyzs, sigmas, rgbs, deltas, ts, rays_a,
-                              flow, opacity, depth, rgb)
+                              w2c, flow, opacity, depth, rgb)
         ctx.T_threshold = T_threshold
         ctx.fx = fx
         ctx.fy = fy
@@ -193,15 +194,16 @@ class DeformVolumeRenderer(torch.autograd.Function):
     @custom_bwd
     def backward(ctx, dL_dflow, dL_dopacity, dL_ddepth, dL_drgb):
         # TODO: currently flow is stop_grad to `dL_dsigmas`
-        deformed_xyzs, sigmas, rgbs, deltas, ts, rays_a, \
+        deformed_xyzs, sigmas, rgbs, deltas, ts, rays_a, w2c, \
             flow, opacity, depth, rgb = ctx.saved_tensors
         dL_ddeformed_xyzs, dL_dsigmas, dL_drgbs = \
             vren.composite_train_deform_bw(
                 dL_dflow, dL_dopacity, dL_ddepth, dL_drgb, deformed_xyzs,
-                sigmas, rgbs, deltas, ts, rays_a, flow, opacity, depth, rgb,
+                sigmas, rgbs, deltas, ts, rays_a, w2c,
+                flow, opacity, depth, rgb,
                 ctx.T_threshold, ctx.fx, ctx.fy)
         return dL_ddeformed_xyzs, dL_dsigmas, dL_drgbs, \
-            None, None, None, None, None, None
+            None, None, None, None, None, None, None
 
 
 class TruncExp(torch.autograd.Function):
