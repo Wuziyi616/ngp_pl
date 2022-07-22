@@ -39,3 +39,26 @@ class NeRFLoss(nn.Module):
         d['opacity'] = self.lambda_opa * (-o * torch.log(o))
 
         return d
+
+
+class DeformNeRFLoss(nn.Module):
+
+    def __init__(self, flow_loss_weight=None):
+        super().__init__()
+
+        self.flow_loss_weight = flow_loss_weight
+
+    def forward(self, results, rgbs, **kwargs):
+        d = {}
+        d['rgb'] = (results['rgb'] - rgbs)**2
+
+        # we don't use opacity loss because object geometry shouldn't change
+
+        # if flow is provided
+        if 'flow' in results:
+            assert self.flow_loss_weight is not None
+            gt_flow = kwargs.get('flow', None)
+            assert gt_flow is not None
+            d['flow'] = self.flow_loss_weight * (results['flow'] - gt_flow)**2
+
+        return d

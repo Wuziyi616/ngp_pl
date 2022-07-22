@@ -20,7 +20,7 @@ from models.rendering import render
 
 # optimizer, losses
 from apex.optimizers import FusedAdam
-from losses import NeRFLoss
+from losses import DeformNeRFLoss
 
 # metrics
 from torchmetrics import (PeakSignalNoiseRatio,
@@ -30,23 +30,15 @@ from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 # pytorch-lightning
 from pytorch_lightning.plugins import DDPPlugin
 from pytorch_lightning import LightningModule, Trainer
-from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.utilities.seed import seed_everything
 from pytorch_lightning.utilities.distributed import all_gather_ddp_if_available
 
 # misc.
+from train import depth2img
 from opt import get_opts
 
 warnings.filterwarnings("ignore")
 seed_everything(19870203)
-
-
-def depth2img(depth):
-    depth = (depth - depth.min()) / (depth.max() - depth.min())
-    depth_img = cv2.applyColorMap((depth * 255).astype(np.uint8),
-                                  cv2.COLORMAP_TURBO)
-
-    return depth_img
 
 
 class NeRFSystem(LightningModule):
@@ -57,7 +49,7 @@ class NeRFSystem(LightningModule):
         self.epoch_it = int(hparams.def_num_epochs * 1000)
         self.train_dataset = train_dataset
 
-        self.loss = NeRFLoss()
+        self.loss = DeformNeRFLoss(flow_loss_weight=None)
         self.train_psnr = PeakSignalNoiseRatio(data_range=1)
         self.val_psnr = PeakSignalNoiseRatio(data_range=1)
         self.val_ssim = StructuralSimilarityIndexMeasure(data_range=1)

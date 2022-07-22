@@ -1,36 +1,17 @@
 import os
 import time
 
-import cv2
-import imageio
 import warnings
-import numpy as np
 import wandb
-
-import torch
-from einops import rearrange
 
 # data
 from utils import build_dataloader
 
 # models
 from models.networks import NGP
-from models.rendering import render, MAX_SAMPLES
-
-# optimizer, losses
-from apex.optimizers import FusedAdam
-from losses import NeRFLoss
-
-# metrics
-from torchmetrics import (PeakSignalNoiseRatio,
-                          StructuralSimilarityIndexMeasure)
-from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 
 # pytorch-lightning
-from pytorch_lightning.plugins import DDPPlugin
-from pytorch_lightning import LightningModule, Trainer
 from pytorch_lightning.utilities.seed import seed_everything
-from pytorch_lightning.utilities.distributed import all_gather_ddp_if_available
 
 # misc.
 from opt import get_opts

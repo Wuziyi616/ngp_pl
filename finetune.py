@@ -33,18 +33,11 @@ from pytorch_lightning.utilities.seed import seed_everything
 from pytorch_lightning.utilities.distributed import all_gather_ddp_if_available
 
 # misc.
+from train import depth2img
 from opt import get_opts
 
 warnings.filterwarnings("ignore")
 seed_everything(19870203)
-
-
-def depth2img(depth):
-    depth = (depth - depth.min()) / (depth.max() - depth.min())
-    depth_img = cv2.applyColorMap((depth * 255).astype(np.uint8),
-                                  cv2.COLORMAP_TURBO)
-
-    return depth_img
 
 
 class NeRFSystem(LightningModule):
