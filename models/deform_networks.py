@@ -133,3 +133,53 @@ class DeformNGP(nn.Module):
     @property
     def density_bitfield(self):
         return self.ngp_model.density_bitfield
+
+
+class OffsetDeformNGP(DeformNGP):
+
+    def deform(self, x):
+        """
+        Inputs:
+            x: (N, 3) xyz in [-scale, scale]
+
+        Outputs:
+            offsets: (N, 3)
+            x': (N, 3), xyz after deformation
+        """
+        x = (x - self.xyz_min) / (self.xyz_max - self.xyz_min)
+        dx = self.delta_xyz(x)  # sigmoid output
+        dx = dx * 2. - 1.  # to [-1, 1]
+        return dx, x + dx
+
+    def density(self, x, return_feat=False):
+        """
+        Inputs:
+            x: (N, 3) xyz after deformation
+            return_feat: whether to return intermediate feature
+
+        Outputs:
+            sigmas: (N)
+        """
+        h = self.ngp_model.xyz_encoder(x)
+        sigmas = self.ngp_model.sigma_act(h[:, 0])
+        if return_feat:
+            return sigmas, h
+        return sigmas
+
+    def forward(self, x, d):
+        """
+        Inputs:
+            x: (N, 3) xyz in [-scale, scale]
+            d: (N, 3) directions
+
+        Outputs:
+            offsets: (N, 3)
+            sigmas: (N)
+            rgbs: (N, 3)
+        """
+        offsets, deform_x = self.deform(x)
+        sigmas, h = self.density(deform_x, return_feat=True)
+        # d /= torch.norm(d, dim=-1, keepdim=True)
+        d = self.ngp_model.dir_encoder((d + 1.) / 2.)
+        rgbs = self.ngp_model.rgb_net(torch.cat([d, h], 1))
+        return offsets, sigmas, rgbs
