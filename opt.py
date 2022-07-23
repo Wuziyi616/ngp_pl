@@ -59,6 +59,11 @@ def get_opts():
     parser.add_argument(
         '--ft_interval', type=float, default=4, help='keyframing interval')
     parser.add_argument(
+        '--ft_rgb',
+        action='store_true',
+        default=False,
+        help='finetune the RGB branch')
+    parser.add_argument(
         '--num_gpus', type=int, default=1, help='number of gpus')
 
     parser.add_argument(
@@ -82,6 +87,8 @@ def get_opts():
         '--ft_lr', type=float, default=1e-2, help='finetuning learning rate')
     parser.add_argument(
         '--def_lr', type=float, default=1e-3, help='deformation learning rate')
+    parser.add_argument(
+        '--flow_loss_w', type=float, default=1., help='flow loss')
 
     parser.add_argument(
         '--exp_name', type=str, default='exp', help='experiment name')

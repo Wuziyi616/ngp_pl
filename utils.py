@@ -1,3 +1,6 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
 import torch
 from torch.utils.data import DataLoader
 
@@ -70,3 +73,22 @@ def slim_ckpt(ckpt_path):
     for k in keys_to_pop:
         ckpt['state_dict'].pop(k)
     return ckpt['state_dict']
+
+
+def show_flow(flow, h=256, w=256, show=True):
+    """Plot the flow map.
+
+    Inputs:
+        flow: [H, W, 2]
+    """
+    if len(flow.shape) == 2:
+        flow = flow.reshape(h, w, 2)
+    if isinstance(flow, torch.Tensor):
+        flow = flow.detach().cpu().numpy()
+    flow = flow + 127.5
+    flow = np.round(flow).astype(np.uint8)
+    flow = np.concatenate([flow, np.zeros((h, w, 1), dtype=np.uint8)], axis=-1)
+    plt.figure()
+    plt.imshow(flow)
+    if show:
+        plt.show()

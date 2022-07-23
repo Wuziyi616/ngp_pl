@@ -49,7 +49,7 @@ class NeRFSystem(LightningModule):
         self.epoch_it = int(hparams.def_num_epochs * 1000)
         self.train_dataset = train_dataset
 
-        self.loss = DeformNeRFLoss(flow_loss_weight=None)
+        self.loss = DeformNeRFLoss()
         self.train_psnr = PeakSignalNoiseRatio(data_range=1)
         self.val_psnr = PeakSignalNoiseRatio(data_range=1)
         self.val_ssim = StructuralSimilarityIndexMeasure(data_range=1)
@@ -57,7 +57,7 @@ class NeRFSystem(LightningModule):
         for p in self.val_lpips.net.parameters():
             p.requires_grad = False
 
-        self.model = DeformNGP(ngp_model=ngp_model)
+        self.model = DeformNGP(ngp_model=ngp_model, ft_rgb=hparams.ft_rgb)
 
     def forward(self, rays, split):
         kwargs = {'test_time': split != 'train'}
@@ -67,10 +67,22 @@ class NeRFSystem(LightningModule):
         return render(self.model, rays, **kwargs)
 
     def configure_optimizers(self):
-        self.opt = FusedAdam(
-            filter(lambda p: p.requires_grad, self.model.parameters()),
-            self.hparams.def_lr,
-            eps=1e-15)
+        if not self.hparams.ft_rgb:
+            params_list = filter(lambda p: p.requires_grad,
+                                 self.model.parameters())
+        else:
+            deform_params = list(self.model.delta_xyz.parameters())
+            rgb_params = list(self.model.ngp_model.rgb_net.parameters())
+            params_list = [
+                {
+                    'params': deform_params,
+                },
+                {
+                    'params': rgb_params,
+                    'lr': self.hparams.ft_lr,
+                },
+            ]
+        self.opt = FusedAdam(params_list, lr=self.hparams.def_lr, eps=1e-15)
         return self.opt
 
     def training_step(self, batch, batch_nb):
@@ -191,7 +203,7 @@ if __name__ == '__main__':
     trainer = build_trainer(hparams, callbacks=callbacks)
 
     # pretrained NGP as template model
-    ngp_model = NGP(scale=hparams.scale, black_bg=hparams.black_bg).eval()
+    ngp_model = NGP(scale=hparams.scale, black_bg=hparams.black_bg)
     ngp_model.load_state_dict(get_ckpt(hparams))
 
     system = None

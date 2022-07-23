@@ -9,12 +9,15 @@ from .networks import NGP
 
 class DeformNGP(nn.Module):
 
-    def __init__(self, ngp_model: NGP):
+    def __init__(self, ngp_model: NGP, ft_rgb=False):
         super().__init__()
 
         self.ngp_model = ngp_model.eval()
-        for p in self.ngp_model.parameters():
-            p.requires_grad = False
+        self.ft_rgb = ft_rgb
+        for kv in self.ngp_model.named_parameters():
+            if self.ft_rgb and 'rgb_net' in kv[0]:
+                continue
+            kv[1].requires_grad = False
 
         # constants, same as NGP
         L = 16
@@ -96,6 +99,9 @@ class DeformNGP(nn.Module):
             module.train(mode)
         # ngp_model should always in be in eval mode
         self.ngp_model.eval()
+        # if finetuning RGB branch
+        if self.ft_rgb:
+            self.ngp_model.rgb_net.train(mode)
         return self
 
     @property
@@ -137,6 +143,12 @@ class DeformNGP(nn.Module):
 
 class OffsetDeformNGP(DeformNGP):
 
+    def _normalize_xyz(self, x):
+        return (x - self.xyz_min) / (self.xyz_max - self.xyz_min)
+
+    def _denormalize_xyz(self, x):
+        return x * (self.xyz_max - self.xyz_min) + self.xyz_min
+
     def deform(self, x):
         """
         Inputs:
@@ -147,10 +159,10 @@ class OffsetDeformNGP(DeformNGP):
             x': (N, 3), xyz after deformation
         """
         x = x.detach()
-        x = (x - self.xyz_min) / (self.xyz_max - self.xyz_min)
+        x = self._normalize_xyz(x)  # [0, 1]
         dx = self.delta_xyz(x)  # sigmoid output
         dx = dx * 2. - 1.  # to [-1, 1]
-        return dx, x + dx
+        return x + dx
 
     def density(self, x, return_feat=False):
         """
@@ -174,14 +186,15 @@ class OffsetDeformNGP(DeformNGP):
             d: (N, 3) directions
 
         Outputs:
-            offsets: (N, 3)
-            deform_x: (N, 3), x after deformation
+            deform_x: (N, 3), x after deformation, denormalized to original scale
             sigmas: (N)
             rgbs: (N, 3)
         """
-        offsets, deform_x = self.deform(x)
+        deform_x = self.deform(x)
         sigmas, h = self.density(deform_x, return_feat=True)
         # d /= torch.norm(d, dim=-1, keepdim=True)
         d = self.ngp_model.dir_encoder((d + 1.) / 2.)
         rgbs = self.ngp_model.rgb_net(torch.cat([d, h], 1))
-        return offsets, deform_x, sigmas, rgbs
+        # denormalize to original scale
+        deform_x = self._denormalize_xyz(deform_x)
+        return deform_x, sigmas, rgbs

@@ -59,6 +59,7 @@ class KubricDataset(BaseDataset):
             self.rays = torch.cat(list(rays_train.values()))
             # rays: [num_imgs * (w*h), (rays_o, rays_d, rgb)]
             self.idx2imgidx = np.arange(self.rays.shape[0]) // (w * h)
+            self.idx2pixidx = np.arange(self.rays.shape[0]) % (w * h)
         else:  # val, test
             self.rays = self.read_meta(split)
             # a dict, key: img_idx, value: [w*h, (rays_o, rays_d, rgb)]
@@ -114,7 +115,7 @@ class KubricFlowDataset(KubricDataset):
         img_grids = get_img_grids(self.img_wh[1], self.img_wh[0], self.K)
         img_grids[..., 0] = img_grids[..., 0] / self.img_wh[0]
         img_grids[..., 1] = img_grids[..., 1] / self.img_wh[1]
-        self.img_grids = img_grids
+        self.img_grids = img_grids.flatten(0, 1)
 
         rays = {}  # {frame_idx: ray tensor}
         self.poses, self.inv_poses = [], []
@@ -152,13 +153,14 @@ class KubricFlowDataset(KubricDataset):
             # TODO: normalize the flow
             flow[..., 0] = flow[..., 0] / self.img_wh[0]
             flow[..., 1] = flow[..., 1] / self.img_wh[1]
-            flow = flow + self.img_grids
             flow = rearrange(flow, 'h w c -> (h w) c')
+            flow = flow + self.img_grids
 
             # (h*w, 9)
             rays[idx] = torch.cat([rays_o, rays_d, img, flow], 1).cpu()
         self.poses = np.float32(self.poses)
         self.inv_poses = torch.stack(self.inv_poses)  # (num_imgs, 3*4)
+        self.img_grids = self.img_grids.cpu()
 
         return rays
 
@@ -173,7 +175,11 @@ class KubricFlowDataset(KubricDataset):
             # w2c matrix
             imgidxs = self.idx2imgidx[idxs]
             sample['w2c'] = self.inv_poses[imgidxs]  # [N, 3*4]
+            # default flow
+            pixidxs = self.idx2pixidx[idxs]
+            sample['bg_flow'] = self.img_grids[pixidxs]  # [N, 2]
         else:
             sample['flow'] = self.rays[idx][:, 9:11]
             sample['w2c'] = self.inv_poses[idx]  # [3*4]
+            sample['bg_flow'] = self.img_grids  # [h*w, 2]
         return sample

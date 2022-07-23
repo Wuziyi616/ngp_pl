@@ -60,7 +60,7 @@ class NeRFSystem(LightningModule):
         self.epoch_it = int(hparams.def_num_epochs * 1000)
         self.train_dataset = train_dataset
 
-        self.loss = DeformNeRFLoss(flow_loss_weight=1.)
+        self.loss = DeformNeRFLoss()
         self.train_psnr = PeakSignalNoiseRatio(data_range=1)
         self.val_psnr = PeakSignalNoiseRatio(data_range=1)
         self.val_ssim = StructuralSimilarityIndexMeasure(data_range=1)
@@ -69,17 +69,19 @@ class NeRFSystem(LightningModule):
         for p in self.val_lpips.net.parameters():
             p.requires_grad = False
 
-        self.model = OffsetDeformNGP(ngp_model=ngp_model)
+        self.model = OffsetDeformNGP(
+            ngp_model=ngp_model, ft_rgb=hparams.ft_rgb)
 
-    def forward(self, rays, w2c, split):
+    def forward(self, batch_data, split):
         kwargs = {'test_time': split != 'train'}
         if self.hparams.dataset_name == 'colmap':
             kwargs['exp_step_factor'] = 1. / 256.
 
         return deform_render(
             self.model,
-            rays,
-            w2c=w2c,
+            batch_data['rays'],
+            w2c=batch_data['w2c'],
+            bg_flow=batch_data['bg_flow'],
             fx=self.train_dataset.fx,
             fy=self.train_dataset.fy,
             wh=self.train_dataset.img_wh,
@@ -87,18 +89,30 @@ class NeRFSystem(LightningModule):
         )
 
     def configure_optimizers(self):
-        self.opt = FusedAdam(
-            filter(lambda p: p.requires_grad, self.model.parameters()),
-            self.hparams.def_lr,
-            eps=1e-15)
+        if not self.hparams.ft_rgb:
+            params_list = filter(lambda p: p.requires_grad,
+                                 self.model.parameters())
+        else:
+            deform_params = list(self.model.delta_xyz.parameters())
+            rgb_params = list(self.model.ngp_model.rgb_net.parameters())
+            params_list = [
+                {
+                    'params': deform_params,
+                },
+                {
+                    'params': rgb_params,
+                    'lr': self.hparams.ft_lr,
+                },
+            ]
+        self.opt = FusedAdam(params_list, lr=self.hparams.def_lr, eps=1e-15)
         return self.opt
 
     def training_step(self, batch, batch_nb):
-        rays, rgb, flow, w2c = \
-            batch['rays'], batch['rgb'], batch['flow'], batch['w2c']
-        results = self(rays, w2c=w2c, split='train')
+        rgb, flow = batch['rgb'], batch['flow']
+        results = self(batch, split='train')
         loss_d = self.loss(results, rgb, flow=flow)
-        loss = sum(lo.mean() for lo in loss_d.values())
+        loss = loss_d['rgb'].mean() * 1. + \
+            loss_d['flow'].mean() * self.hparams.flow_loss_w
 
         with torch.no_grad():
             self.train_psnr(results['rgb'], rgb)
@@ -124,9 +138,8 @@ class NeRFSystem(LightningModule):
             os.makedirs(self.val_dir, exist_ok=True)
 
     def validation_step(self, batch, batch_nb):
-        rays, rgb_gt, flow_gt, w2c = \
-            batch['rays'], batch['rgb'], batch['flow'], batch['w2c']
-        results = self(rays, w2c=w2c, split='test')
+        rgb_gt, flow_gt = batch['rgb'], batch['flow']
+        results = self(batch, split='test')
 
         logs = {}
         # compute each metric per image
@@ -163,12 +176,10 @@ class NeRFSystem(LightningModule):
             # imageio.imsave(
             #     os.path.join(self.val_dir, f'{idx:03d}_d.png'), depth)
             flow_pred = rearrange(
-                results['flow'], '(h w) c -> h w c',
-                h=h) - self.train_dataset.img_grids
+                results['flow'] - batch['bg_flow'], '(h w) c -> h w c', h=h)
             flow_pred = flow2img(flow_pred)
             flow_gt = rearrange(
-                flow_gt, '(h w) c -> h w c',
-                h=h) - self.train_dataset.img_grids
+                flow_gt - batch['bg_flow'], '(h w) c -> h w c', h=h)
             flow_gt = flow2img(flow_gt)
             fn = f'{self.hparams.timestep}-{idx:03d}-pred_flow.png'
             imageio.imsave(os.path.join(self.val_dir, fn), flow_pred)
@@ -231,7 +242,7 @@ if __name__ == '__main__':
     trainer = build_trainer(hparams, callbacks=callbacks)
 
     # pretrained NGP as template model
-    ngp_model = NGP(scale=hparams.scale, black_bg=hparams.black_bg).eval()
+    ngp_model = NGP(scale=hparams.scale, black_bg=hparams.black_bg)
     ngp_model.load_state_dict(get_ckpt(hparams))
 
     system = None
