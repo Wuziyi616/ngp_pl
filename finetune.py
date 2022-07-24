@@ -60,12 +60,12 @@ class NeRFSystem(LightningModule):
 
         self.S = 16  # the interval to update density grid
 
-    def forward(self, rays, split):
+    def forward(self, batch_data, split):
         kwargs = {'test_time': split != 'train'}
         if self.hparams.dataset_name == 'colmap':
             kwargs['exp_step_factor'] = 1. / 256.
 
-        return render(self.model, rays, **kwargs)
+        return render(self.model, batch_data['rays'], **kwargs)
 
     def configure_optimizers(self):
         self.opt = FusedAdam(
@@ -80,21 +80,24 @@ class NeRFSystem(LightningModule):
     def training_step(self, batch, batch_nb):
         if self.global_step % self.S == 0:
             self.model.update_density_grid(
-                0.01 * MAX_SAMPLES / 3**0.5, warmup=self.global_step < 256)
+                0.01 * MAX_SAMPLES / 3**0.5,
+                warmup=self.global_step < 256,
+                erode=hparams.dataset_name == 'colmap')
 
-        rays, rgb = batch['rays'], batch['rgb']
-        results = self(rays, split='train')
-        loss_d = self.loss(results, rgb)
+        results = self(batch, split='train')
+        loss_d = self.loss(results, batch)
         loss = sum(lo.mean() for lo in loss_d.values())
 
         with torch.no_grad():
-            self.train_psnr(results['rgb'], rgb)
+            self.train_psnr(results['rgb'], batch['rgb'])
 
             step = self.epoch_it * self.hparams.timestep + self.global_step
             log_dict = {
                 'train/lr': self.opt.param_groups[0]['lr'],
                 'train/loss': loss.detach().item(),
                 'train/psnr': self.train_psnr.compute().item(),
+                'train/s_per_ray':
+                results['total_samples'] / len(batch['rays']),
             }
             wandb.log(log_dict, step=step)
 
@@ -107,8 +110,8 @@ class NeRFSystem(LightningModule):
             os.makedirs(self.val_dir, exist_ok=True)
 
     def validation_step(self, batch, batch_nb):
-        rays, rgb_gt = batch['rays'], batch['rgb']
-        results = self(rays, split='test')
+        rgb_gt = batch['rgb']
+        results = self(batch, split='test')
 
         logs = {}
         # compute each metric per image
@@ -161,6 +164,12 @@ class NeRFSystem(LightningModule):
         print('\n'.join(f'{k}: {v:.4f}' for k, v in log_dict.items()))
         print('\n\n')
         wandb.log(log_dict, step=step, commit=True)
+
+    def get_progress_bar_dict(self):
+        # don't show the version number
+        items = super().get_progress_bar_dict()
+        items.pop("v_num", None)
+        return items
 
 
 def build_trainer(hparams, callbacks=None):

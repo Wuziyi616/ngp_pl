@@ -24,6 +24,7 @@ class DeformNGP(nn.Module):
         F = 2
         log2_T = 19
         N_min = 16
+        b = np.exp(np.log(2048 * ngp_model.scale / N_min) / (L - 1))
 
         self.delta_xyz = tcnn.NetworkWithInputEncoding(
             n_input_dims=3,
@@ -34,8 +35,7 @@ class DeformNGP(nn.Module):
                 "n_features_per_level": F,
                 "log2_hashmap_size": log2_T,
                 "base_resolution": N_min,
-                "per_level_scale":
-                np.exp(np.log(2048 * ngp_model.scale / N_min) / (L - 1)),
+                "per_level_scale": b,
             },
             network_config={
                 "otype": "FullyFusedMLP",

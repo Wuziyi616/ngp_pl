@@ -27,7 +27,8 @@ def read_pfm(path):
         else:
             raise Exception("Not a PFM file: " + path)
 
-        dim_match = re.match(r"^(\d+)\s(\d+)\s$", file.readline().decode("ascii"))
+        dim_match = re.match(r"^(\d+)\s(\d+)\s$",
+                             file.readline().decode("ascii"))
         if dim_match:
             width, height = list(map(int, dim_match.groups()))
         else:

@@ -60,7 +60,7 @@ class NeRFSystem(LightningModule):
         self.epoch_it = int(hparams.def_num_epochs * 1000)
         self.train_dataset = train_dataset
 
-        self.loss = DeformNeRFLoss()
+        self.loss = DeformNeRFLoss(lambda_flow=hparams.flow_loss_w)
         self.train_psnr = PeakSignalNoiseRatio(data_range=1)
         self.val_psnr = PeakSignalNoiseRatio(data_range=1)
         self.val_ssim = StructuralSimilarityIndexMeasure(data_range=1)
@@ -108,20 +108,20 @@ class NeRFSystem(LightningModule):
         return self.opt
 
     def training_step(self, batch, batch_nb):
-        rgb, flow = batch['rgb'], batch['flow']
         results = self(batch, split='train')
-        loss_d = self.loss(results, rgb, flow=flow)
-        loss = loss_d['rgb'].mean() * 1. + \
-            loss_d['flow'].mean() * self.hparams.flow_loss_w
+        loss_d = self.loss(results, batch)
+        loss = sum(lo.mean() for lo in loss_d.values())
 
         with torch.no_grad():
-            self.train_psnr(results['rgb'], rgb)
+            self.train_psnr(results['rgb'], batch['rgb'])
 
             step = self.epoch_it * self.hparams.timestep + self.global_step
             log_dict = {
                 'train/lr': self.opt.param_groups[0]['lr'],
                 'train/loss': loss.detach().item(),
                 'train/psnr': self.train_psnr.compute().item(),
+                'train/s_per_ray':
+                results['total_samples'] / len(batch['rays']),
             }
             log_dict.update({
                 f'train/{k}_loss': v.mean().item()
@@ -210,6 +210,12 @@ class NeRFSystem(LightningModule):
         print('\n'.join(f'{k}: {v:.4f}' for k, v in log_dict.items()))
         print('\n\n')
         wandb.log(log_dict, step=step, commit=True)
+
+    def get_progress_bar_dict(self):
+        # don't show the version number
+        items = super().get_progress_bar_dict()
+        items.pop("v_num", None)
+        return items
 
 
 def build_trainer(hparams, callbacks=None):

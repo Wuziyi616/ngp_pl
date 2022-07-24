@@ -13,13 +13,13 @@ def shiftscale_inv_depthloss(disp_pred, disp_gt):
         loss: (N)
     """
     t_pred = torch.median(disp_pred)
-    s_pred = torch.mean(torch.abs(disp_pred-t_pred))
+    s_pred = torch.mean(torch.abs(disp_pred - t_pred))
     t_gt = torch.median(disp_gt)
-    s_gt = torch.mean(torch.abs(disp_gt-t_gt))
+    s_gt = torch.mean(torch.abs(disp_gt - t_gt))
 
-    disp_pred_n = (disp_pred-t_pred)/s_pred
-    disp_gt_n = (disp_gt-t_gt)/s_gt
-    loss = (disp_pred_n-disp_gt_n)**2
+    disp_pred_n = (disp_pred - t_pred) / s_pred
+    disp_gt_n = (disp_gt - t_gt) / s_gt
+    loss = (disp_pred_n - disp_gt_n)**2
     return loss
 
 
@@ -32,25 +32,29 @@ class NeRFLoss(nn.Module):
 
     def forward(self, results, target, **kwargs):
         d = {}
-        d['rgb'] = (results['rgb']-target['rgb'])**2
+        d['rgb'] = (results['rgb'] - target['rgb'])**2
 
-        o = results['opacity']+1e-10
+        o = results['opacity'] + 1e-10
         # encourage opacity to be either 0 or 1 to avoid floater
         d['opacity'] = self.lambda_opa * (-o * torch.log(o))
 
         return d
 
 
-class DeformNeRFLoss(nn.Module):
+class DeformNeRFLoss(NeRFLoss):
 
-    def forward(self, results, rgbs, **kwargs):
-        d = {}
-        d['rgb'] = (results['rgb'] - rgbs)**2
+    def __init__(self, lambda_flow=10.):
+        super().__init__()
 
-        # we don't use opacity loss because object geometry shouldn't change
+        # TODO: no opacity loss because object geometry shouldn't change?
+        self.lambda_opa = 0.
+        self.lambda_flow = lambda_flow
 
-        # if flow is provided
+    def forward(self, results, target, **kwargs):
+        d = super().forward(results, target, **kwargs)
+
+        # flow
         if 'flow' in results:
-            d['flow'] = (results['flow'] - kwargs['flow'])**2
+            d['flow'] = self.lambda_flow * (results['flow'] - target['flow'])**2
 
         return d

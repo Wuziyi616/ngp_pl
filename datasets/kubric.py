@@ -23,7 +23,7 @@ class KubricDataset(BaseDataset):
         downsample=1.0,
         **kwargs,
     ):
-        super().__init__(root_dir, split, downsample)
+        super().__init__(root_dir, split, downsample, **kwargs)
         self.timestep = timestep
 
         meta_fn = f"transforms_{self.split}_{self.timestep:05d}.json"
@@ -171,7 +171,7 @@ class KubricFlowDataset(KubricDataset):
         # this is suitable for pinhole camera whose x is W and y is H
         if self.split.startswith('train'):
             idxs = sample['idxs']
-            sample['flow'] = self.rays[idxs, 9:11]
+            sample['flow'] = self.rays[idxs, -2:]
             # w2c matrix
             imgidxs = self.idx2imgidx[idxs]
             sample['w2c'] = self.inv_poses[imgidxs]  # [N, 3*4]
@@ -179,7 +179,7 @@ class KubricFlowDataset(KubricDataset):
             pixidxs = self.idx2pixidx[idxs]
             sample['bg_flow'] = self.img_grids[pixidxs]  # [N, 2]
         else:
-            sample['flow'] = self.rays[idx][:, 9:11]
+            sample['flow'] = self.rays[idx][:, -2:]
             sample['w2c'] = self.inv_poses[idx]  # [3*4]
             sample['bg_flow'] = self.img_grids  # [h*w, 2]
         return sample

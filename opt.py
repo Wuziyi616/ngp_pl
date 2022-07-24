@@ -32,6 +32,11 @@ def get_opts():
         help='downsample factor (<=1.0) for the images')
 
     parser.add_argument(
+        '--use_depth',
+        action='store_true',
+        default=False,
+        help='use depth as training supervision')
+    parser.add_argument(
         '--black_bg',
         action='store_true',
         default=False,

@@ -5,7 +5,7 @@ import vren
 from .custom_functions import RayAABBIntersector, RayMarcher, VolumeRenderer
 
 MAX_SAMPLES = 1024
-NEAR_DISTANCE = 0.2
+NEAR_DISTANCE = 0.02
 INF_DISTANCE = 1e3
 
 

@@ -132,8 +132,8 @@ class VolumeRenderer(torch.autograd.Function):
         opacity, depth, depth_sq, rgb = \
             vren.composite_train_fw(sigmas, rgbs, deltas, ts,
                                     rays_a, T_threshold)
-        ctx.save_for_backward(sigmas, rgbs, deltas, ts, rays_a,
-                              opacity, depth, depth_sq, rgb)
+        ctx.save_for_backward(sigmas, rgbs, deltas, ts, rays_a, opacity, depth,
+                              depth_sq, rgb)
         ctx.T_threshold = T_threshold
         return opacity, depth, depth_sq, rgb
 
@@ -141,13 +141,12 @@ class VolumeRenderer(torch.autograd.Function):
     @custom_bwd
     def backward(ctx, dL_dopacity, dL_ddepth, dL_ddepth_sq, dL_drgb):
         sigmas, rgbs, deltas, ts, rays_a, \
-        opacity, depth, depth_sq, rgb = ctx.saved_tensors
+            opacity, depth, depth_sq, rgb = ctx.saved_tensors
         dL_dsigmas, dL_drgbs = \
-            vren.composite_train_bw(dL_dopacity, dL_ddepth, dL_ddepth_sq,
-                                    dL_drgb, sigmas, rgbs, deltas, ts,
-                                    rays_a,
-                                    opacity, depth, depth_sq, rgb,
-                                    ctx.T_threshold)
+            vren.composite_train_bw(
+                dL_dopacity, dL_ddepth, dL_ddepth_sq, dL_drgb,
+                sigmas, rgbs, deltas, ts, rays_a,
+                opacity, depth, depth_sq, rgb, ctx.T_threshold)
         return dL_dsigmas, dL_drgbs, None, None, None, None
 
 

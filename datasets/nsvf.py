@@ -17,7 +17,7 @@ from .base import BaseDataset
 class NSVFDataset(BaseDataset):
 
     def __init__(self, root_dir, split='train', downsample=1.0, **kwargs):
-        super().__init__(root_dir, split, downsample)
+        super().__init__(root_dir, split, downsample, **kwargs)
 
         xyz_min, xyz_max = \
             np.loadtxt(os.path.join(root_dir, 'bbox.txt'))[:6].reshape(2, 3)
@@ -36,7 +36,7 @@ class NSVFDataset(BaseDataset):
             if 'Synthetic' in root_dir:
                 w = h = int(800 * downsample)
             else:
-                w, h = int(1920*downsample), int(1080*downsample)
+                w, h = int(1920 * downsample), int(1080 * downsample)
 
             self.K = np.float32([[fx, 0, w / 2], [0, fy, h / 2], [0, 0, 1]])
         else:
@@ -65,7 +65,7 @@ class NSVFDataset(BaseDataset):
             self.rays = self.read_meta(split)
 
     def read_meta(self, split):
-        rays = {} # {frame_idx: ray tensor}
+        rays = {}  # {frame_idx: ray tensor}
         self.poses = []
 
         if split == 'test_traj':  # BlendedMVS and TanksAndTemple
@@ -79,11 +79,12 @@ class NSVFDataset(BaseDataset):
                 poses = poses.reshape(-1, 4, 4)
             for idx, pose in enumerate(poses):
                 c2w = pose[:3]
-                c2w[:, 0] *= -1 # [left down front] to [right down front]
+                c2w[:, 0] *= -1  # [left down front] to [right down front]
                 c2w[:, 3] -= self.shift
-                c2w[:, 3] /= self.scale # to bound the scene inside [-1, 1]
+                c2w[:, 3] /= self.scale  # to bound the scene inside [-1, 1]
                 self.poses += [c2w]
-                rays_o, rays_d = get_rays(self.directions, torch.cuda.FloatTensor(c2w))
+                rays_o, rays_d = get_rays(self.directions,
+                                          torch.cuda.FloatTensor(c2w))
 
                 rays[idx] = torch.cat([rays_o, rays_d], 1).cpu()  # (h*w, 6)
         else:

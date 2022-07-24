@@ -13,6 +13,7 @@ def build_dataloader(hparams):
         'root_dir': hparams.root_dir,
         'downsample': hparams.downsample,
         'timestep': hparams.timestep,
+        'use_depth': hparams.use_depth,
     }
     train_dataset = dataset(split=hparams.split, **kwargs)
     train_dataset.batch_size = hparams.batch_size
