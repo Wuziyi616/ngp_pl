@@ -1,7 +1,6 @@
 import os
 import time
 
-import cv2
 import imageio
 import warnings
 import numpy as np
@@ -14,68 +13,39 @@ from einops import rearrange
 from utils import build_dataloader
 
 # models
-from models.networks import NGP
-from models.rendering import render, MAX_SAMPLES
+from models.rendering import MAX_SAMPLES
 
 # optimizer, losses
 from apex.optimizers import FusedAdam
-from losses import NeRFLoss
-
-# metrics
-from torchmetrics import (PeakSignalNoiseRatio,
-                          StructuralSimilarityIndexMeasure)
-from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 
 # pytorch-lightning
 from pytorch_lightning.plugins import DDPPlugin
-from pytorch_lightning import LightningModule, Trainer
+from pytorch_lightning import Trainer
 from pytorch_lightning.utilities.seed import seed_everything
 from pytorch_lightning.utilities.distributed import all_gather_ddp_if_available
 
 # misc.
 from train import depth2img
+from train import NeRFSystem as BaseNeRFSystem
 from opt import get_opts
 
 warnings.filterwarnings("ignore")
 seed_everything(19870203)
 
 
-class NeRFSystem(LightningModule):
+class NeRFSystem(BaseNeRFSystem):
 
     def __init__(self, hparams, train_dataset):
-        super().__init__()
-        self.save_hyperparameters(hparams)
+        hparams.eval_lpips = True
+
+        super().__init__(hparams, train_dataset)
+
         self.epoch_it = int(hparams.ft_num_epochs * 1000)
-        self.train_dataset = train_dataset
-
-        self.loss = NeRFLoss()
-        self.train_psnr = PeakSignalNoiseRatio(data_range=1)
-        self.val_psnr = PeakSignalNoiseRatio(data_range=1)
-        self.val_ssim = StructuralSimilarityIndexMeasure(data_range=1)
-        self.val_lpips = LearnedPerceptualImagePatchSimilarity('vgg')
-        for p in self.val_lpips.net.parameters():
-            p.requires_grad = False
-
-        self.model = NGP(scale=hparams.scale, black_bg=hparams.black_bg)
-
-        self.S = 16  # the interval to update density grid
-
-    def forward(self, batch_data, split):
-        kwargs = {'test_time': split != 'train'}
-        if self.hparams.dataset_name == 'colmap':
-            kwargs['exp_step_factor'] = 1. / 256.
-
-        return render(self.model, batch_data['rays'], **kwargs)
 
     def configure_optimizers(self):
         self.opt = FusedAdam(
             self.model.parameters(), self.hparams.ft_lr, eps=1e-15)
         return self.opt
-
-    def on_train_start(self):
-        K = torch.cuda.FloatTensor(self.train_dataset.K)
-        poses = torch.cuda.FloatTensor(self.train_dataset.poses)
-        self.model.mark_invisible_cells(K, poses, self.train_dataset.img_wh)
 
     def training_step(self, batch, batch_nb):
         if self.global_step % self.S == 0:
@@ -102,12 +72,6 @@ class NeRFSystem(LightningModule):
             wandb.log(log_dict, step=step)
 
         return loss
-
-    def on_validation_start(self):
-        torch.cuda.empty_cache()
-        if not self.hparams.no_save_test:
-            self.val_dir = f'ckpts/{self.hparams.exp_name}/val'
-            os.makedirs(self.val_dir, exist_ok=True)
 
     def validation_step(self, batch, batch_nb):
         rgb_gt = batch['rgb']
@@ -164,12 +128,6 @@ class NeRFSystem(LightningModule):
         print('\n'.join(f'{k}: {v:.4f}' for k, v in log_dict.items()))
         print('\n\n')
         wandb.log(log_dict, step=step, commit=True)
-
-    def get_progress_bar_dict(self):
-        # don't show the version number
-        items = super().get_progress_bar_dict()
-        items.pop("v_num", None)
-        return items
 
 
 def build_trainer(hparams, callbacks=None):

@@ -1,7 +1,6 @@
 import os
 import time
 
-import cv2
 import imageio
 import warnings
 import numpy as np
@@ -14,27 +13,20 @@ from einops import rearrange
 from utils import build_dataloader
 
 # models
-from models.networks import NGP
-from models.deform_networks import OffsetDeformNGP
+from models.deform_networks import DeformNGP
 from models.deform_rendering import deform_render
 
-# optimizer, losses
-from apex.optimizers import FusedAdam
-from losses import DeformNeRFLoss
-
 # metrics
-from torchmetrics import (MeanSquaredError, PeakSignalNoiseRatio,
-                          StructuralSimilarityIndexMeasure)
-from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
+from torchmetrics import MeanSquaredError
 
 # pytorch-lightning
 from pytorch_lightning.plugins import DDPPlugin
-from pytorch_lightning import LightningModule, Trainer
+from pytorch_lightning import Trainer
 from pytorch_lightning.utilities.seed import seed_everything
 from pytorch_lightning.utilities.distributed import all_gather_ddp_if_available
 
 # misc.
-from deform import depth2img, get_ckpt
+from deform import NeRFSystem as BaseNeRFSystem
 from opt import get_opts
 from cvbase.optflow import flow2rgb
 
@@ -52,25 +44,19 @@ def flow2img(flow):
     return flow
 
 
-class NeRFSystem(LightningModule):
+class NeRFSystem(BaseNeRFSystem):
 
-    def __init__(self, hparams, train_dataset, ngp_model):
-        super().__init__()
-        self.save_hyperparameters(hparams)
-        self.epoch_it = int(hparams.def_num_epochs * 1000)
-        self.train_dataset = train_dataset
+    def __init__(self, hparams, train_dataset):
+        super().__init__(hparams, train_dataset)
 
-        self.loss = DeformNeRFLoss(lambda_flow=hparams.flow_loss_w)
-        self.train_psnr = PeakSignalNoiseRatio(data_range=1)
-        self.val_psnr = PeakSignalNoiseRatio(data_range=1)
-        self.val_ssim = StructuralSimilarityIndexMeasure(data_range=1)
-        self.val_lpips = LearnedPerceptualImagePatchSimilarity('vgg')
         self.val_flow_mse = MeanSquaredError()
-        for p in self.val_lpips.net.parameters():
-            p.requires_grad = False
-
-        self.model = OffsetDeformNGP(
-            ngp_model=ngp_model, ft_rgb=hparams.ft_rgb)
+        self.model = DeformNGP(
+            ckpt_path=hparams.ckpt_path,
+            scale=hparams.scale,
+            black_bg=hparams.black_bg,
+            ft_rgb=hparams.ft_rgb,
+            ret_xyz=True,
+        )
 
     def forward(self, batch_data, split):
         kwargs = {'test_time': split != 'train'}
@@ -87,55 +73,6 @@ class NeRFSystem(LightningModule):
             wh=self.train_dataset.img_wh,
             **kwargs,
         )
-
-    def configure_optimizers(self):
-        if not self.hparams.ft_rgb:
-            params_list = filter(lambda p: p.requires_grad,
-                                 self.model.parameters())
-        else:
-            deform_params = list(self.model.delta_xyz.parameters())
-            rgb_params = list(self.model.ngp_model.rgb_net.parameters())
-            params_list = [
-                {
-                    'params': deform_params,
-                },
-                {
-                    'params': rgb_params,
-                    'lr': self.hparams.ft_lr,
-                },
-            ]
-        self.opt = FusedAdam(params_list, lr=self.hparams.def_lr, eps=1e-15)
-        return self.opt
-
-    def training_step(self, batch, batch_nb):
-        results = self(batch, split='train')
-        loss_d = self.loss(results, batch)
-        loss = sum(lo.mean() for lo in loss_d.values())
-
-        with torch.no_grad():
-            self.train_psnr(results['rgb'], batch['rgb'])
-
-            step = self.epoch_it * self.hparams.timestep + self.global_step
-            log_dict = {
-                'train/lr': self.opt.param_groups[0]['lr'],
-                'train/loss': loss.detach().item(),
-                'train/psnr': self.train_psnr.compute().item(),
-                'train/s_per_ray':
-                results['total_samples'] / len(batch['rays']),
-            }
-            log_dict.update({
-                f'train/{k}_loss': v.mean().item()
-                for k, v in loss_d.items()
-            })
-            wandb.log(log_dict, step=step)
-
-        return loss
-
-    def on_validation_start(self):
-        torch.cuda.empty_cache()
-        if not self.hparams.no_save_test:
-            self.val_dir = f'ckpts/{self.hparams.exp_name}/val'
-            os.makedirs(self.val_dir, exist_ok=True)
 
     def validation_step(self, batch, batch_nb):
         rgb_gt, flow_gt = batch['rgb'], batch['flow']
@@ -211,12 +148,6 @@ class NeRFSystem(LightningModule):
         print('\n\n')
         wandb.log(log_dict, step=step, commit=True)
 
-    def get_progress_bar_dict(self):
-        # don't show the version number
-        items = super().get_progress_bar_dict()
-        items.pop("v_num", None)
-        return items
-
 
 def build_trainer(hparams, callbacks=None):
     return Trainer(
@@ -247,10 +178,6 @@ if __name__ == '__main__':
 
     trainer = build_trainer(hparams, callbacks=callbacks)
 
-    # pretrained NGP as template model
-    ngp_model = NGP(scale=hparams.scale, black_bg=hparams.black_bg)
-    ngp_model.load_state_dict(get_ckpt(hparams))
-
     system = None
     for timestep in range(hparams.timestep_start, hparams.timestep_end):
         print('#######################################################')
@@ -258,12 +185,12 @@ if __name__ == '__main__':
         hparams.timestep = timestep
         train_set, train_loader, test_loader = build_dataloader(hparams)
         if system is None:
-            system = NeRFSystem(hparams, train_set, ngp_model)
+            system = NeRFSystem(hparams, train_set)
             trainer.validate(system, test_loader)
             continue
         else:
             state_dict = system.model.state_dict()
-            system = NeRFSystem(hparams, train_set, ngp_model)
+            system = NeRFSystem(hparams, train_set)
             system.model.load_state_dict(state_dict)
             trainer = build_trainer(hparams, callbacks=callbacks)
 

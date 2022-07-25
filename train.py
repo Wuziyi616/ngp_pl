@@ -71,20 +71,21 @@ class NeRFSystem(LightningModule):
 
         self.S = 16  # the interval to update density grid
 
-    def forward(self, rays, split):
+    def forward(self, batch_data, split):
         kwargs = {'test_time': split != 'train'}
-        if hparams.dataset_name == 'colmap':
+        if self.hparams.dataset_name == 'colmap':
             kwargs['exp_step_factor'] = 1. / 256.
 
-        return render(self.model, rays, **kwargs)
+        return render(self.model, batch_data['rays'], **kwargs)
 
     def configure_optimizers(self):
-        opt = FusedAdam(self.model.parameters(), hparams.lr, eps=1e-15)
-        sch = CosineAnnealingLR(opt, hparams.num_epochs * 1000,
-                                hparams.lr / 30)
+        self.opt = FusedAdam(
+            self.model.parameters(), self.hparams.lr, eps=1e-15)
+        self.sch = CosineAnnealingLR(self.opt, self.hparams.num_epochs * 1000,
+                                     self.hparams.lr / 30)
 
-        return ([opt], [{
-            'scheduler': sch,
+        return ([self.opt], [{
+            'scheduler': self.sch,
             'interval': 'step',
         }])
 
@@ -98,9 +99,9 @@ class NeRFSystem(LightningModule):
             self.model.update_density_grid(
                 0.01 * MAX_SAMPLES / 3**0.5,
                 warmup=self.global_step < 256,
-                erode=hparams.dataset_name == 'colmap')
+                erode=self.hparams.dataset_name == 'colmap')
 
-        results = self(batch['rays'], split='train')
+        results = self(batch, split='train')
         loss_d = self.loss(results, batch, **{'step': self.global_step})
         loss = sum(lo.mean() for lo in loss_d.values())
 
@@ -115,13 +116,13 @@ class NeRFSystem(LightningModule):
 
     def on_validation_start(self):
         torch.cuda.empty_cache()
-        if not hparams.no_save_test:
-            self.val_dir = f'ckpts/{hparams.exp_name}/val'
+        if not self.hparams.no_save_test:
+            self.val_dir = f'ckpts/{self.hparams.exp_name}/val'
             os.makedirs(self.val_dir, exist_ok=True)
 
     def validation_step(self, batch, batch_nb):
         rgb_gt = batch['rgb']
-        results = self(batch['rays'], split='test')
+        results = self(batch, split='test')
 
         logs = {}
         # compute each metric per image
@@ -135,14 +136,14 @@ class NeRFSystem(LightningModule):
         self.val_ssim(rgb_pred, rgb_gt)
         logs['ssim'] = self.val_ssim.compute()
         self.val_ssim.reset()
-        if hparams.eval_lpips:
+        if self.hparams.eval_lpips:
             self.val_lpips(
                 torch.clip(rgb_pred * 2 - 1, -1, 1),
                 torch.clip(rgb_gt * 2 - 1, -1, 1))
             logs['lpips'] = self.val_lpips.compute()
             self.val_lpips.reset()
 
-        if not hparams.no_save_test:  # save test image to disk
+        if not self.hparams.no_save_test:  # save test image to disk
             idx = batch['idx']
             rgb_pred = rearrange(
                 results['rgb'].cpu().numpy(), '(h w) c -> h w c', h=h)
@@ -165,7 +166,7 @@ class NeRFSystem(LightningModule):
         mean_ssim = all_gather_ddp_if_available(ssims).mean()
         self.log('test/ssim', mean_ssim)
 
-        if hparams.eval_lpips:
+        if self.hparams.eval_lpips:
             lpipss = torch.stack([x['lpips'] for x in outputs])
             mean_lpips = all_gather_ddp_if_available(lpipss).mean()
             self.log('test/lpips_vgg', mean_lpips)

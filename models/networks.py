@@ -122,10 +122,8 @@ class NGP(nn.Module):
             rgbs: (N, 3)
         """
         sigmas, h = self.density(x, return_feat=True)
-        # d /= torch.norm(d, dim=-1, keepdim=True)
         d = self.dir_encoder((d + 1.) / 2.)
         rgbs = self.rgb_net(torch.cat([d, h], 1))
-
         return sigmas, rgbs
 
     @torch.no_grad()
@@ -187,8 +185,7 @@ class NGP(nn.Module):
         """
         N_cams = poses.shape[0]
         self.count_grid = torch.zeros_like(self.density_grid)
-        w2c_R = poses[:, :3, :3].transpose(
-            -1, -2)  # (N_cams, 3, 3) batch transpose
+        w2c_R = poses[:, :3, :3].transpose(-1, -2)  # (N_cams, 3, 3)
         w2c_T = -w2c_R @ poses[:, :3, 3:]  # (N_cams, 3, 1)
         cells = self.get_all_cells()
         for c in range(self.cascades):
@@ -202,13 +199,13 @@ class NGP(nn.Module):
                 uvd = K @ xyzs_c  # (N_cams, 3, chunk)
                 uv = uvd[:, :2] / uvd[:, 2:]  # (N_cams, 2, chunk)
                 in_image = (uvd[:, 2] >= 0) & \
-                           (uv[:, 0] >= 0) & (uv[:, 0] < img_wh[0]) & \
-                           (uv[:, 1] >= 0) & (uv[:, 1] < img_wh[1])
+                    (uv[:, 0] >= 0) & (uv[:, 0] < img_wh[0]) & \
+                    (uv[:, 1] >= 0) & (uv[:, 1] < img_wh[1])
                 covered_by_cam = (uvd[:, 2] >=
                                   NEAR_DISTANCE) & in_image  # (N_cams, chunk)
                 # if the cell is visible by at least one camera
                 self.count_grid[c, indices[i:i+chunk]] = \
-                    count = covered_by_cam.sum(0)/N_cams
+                    count = covered_by_cam.sum(0) / N_cams
 
                 too_near_to_cam = (uvd[:, 2] <
                                    NEAR_DISTANCE) & in_image  # (N, chunk)
@@ -216,8 +213,8 @@ class NGP(nn.Module):
                 too_near_to_any_cam = too_near_to_cam.any(0)
                 # a valid cell should be visible by at least one camera and not too close to any camera
                 valid_mask = (count > 0) & (~too_near_to_any_cam)
-                self.density_grid[c, indices[i:i+chunk]] = \
-                    torch.where(valid_mask, 0., -1.)
+                self.density_grid[c, indices[i:i + chunk]] = torch.where(
+                    valid_mask, 0., -1.)
 
     @torch.no_grad()
     def update_density_grid(self,
@@ -236,8 +233,8 @@ class NGP(nn.Module):
             indices, coords = cells[c]
             s = min(2**(c - 1), self.scale)
             half_grid_size = s / self.grid_size
-            xyzs_w = (coords / (self.grid_size - 1) * 2 - 1) * (
-                s - half_grid_size)
+            xyzs_w = (coords / (self.grid_size - 1) * 2 - 1) * \
+                (s - half_grid_size)
             # pick random position in the cell by adding noise in [-hgs, hgs]
             xyzs_w += (torch.rand_like(xyzs_w) * 2 - 1) * half_grid_size
             density_grid_tmp[c, indices] = self.density(xyzs_w)

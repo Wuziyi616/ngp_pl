@@ -1,20 +1,34 @@
 import numpy as np
 
 import torch
-import torch.nn as nn
 import tinycudann as tcnn
 
 from .networks import NGP
 
 
-class DeformNGP(nn.Module):
+def get_ckpt(ckpt_path):
+    ckpt = torch.load(ckpt_path, map_location='cpu')['state_dict']
+    ckpt = {k[6:]: v for k, v in ckpt.items() if k.startswith('model.')}
+    return ckpt
 
-    def __init__(self, ngp_model: NGP, ft_rgb=False):
-        super().__init__()
 
-        self.ngp_model = ngp_model.eval()
+class DeformNGP(NGP):
+    """NGP model with deformation field."""
+
+    def __init__(
+        self,
+        ckpt_path,
+        scale=0.5,
+        black_bg=False,
+        ft_rgb=False,
+        ret_xyz=False,
+    ):
+        super().__init__(scale, black_bg)
+        self.load_state_dict(get_ckpt(ckpt_path))
+
         self.ft_rgb = ft_rgb
-        for kv in self.ngp_model.named_parameters():
+        # fix params of ngp_model
+        for kv in self.named_parameters():
             if self.ft_rgb and 'rgb_net' in kv[0]:
                 continue
             kv[1].requires_grad = False
@@ -24,7 +38,7 @@ class DeformNGP(nn.Module):
         F = 2
         log2_T = 19
         N_min = 16
-        b = np.exp(np.log(2048 * ngp_model.scale / N_min) / (L - 1))
+        b = np.exp(np.log(2048 * self.scale / N_min) / (L - 1))
 
         self.delta_xyz = tcnn.NetworkWithInputEncoding(
             n_input_dims=3,
@@ -45,103 +59,7 @@ class DeformNGP(nn.Module):
                 "n_hidden_layers": 1,
             })
 
-    def deform(self, x):
-        """
-        Inputs:
-            x: (N, 3) xyz in [-scale, scale]
-
-        Outputs:
-            x': (N, 3), xyz after deformation
-        """
-        x = (x - self.xyz_min) / (self.xyz_max - self.xyz_min)
-        dx = self.delta_xyz(x)  # sigmoid output
-        # to [-1, 1]
-        dx = dx * 2. - 1.
-        return x + dx
-
-    def density(self, x, return_feat=False):
-        """
-        Inputs:
-            x: (N, 3) xyz in [-scale, scale]
-            return_feat: whether to return intermediate feature
-
-        Outputs:
-            sigmas: (N)
-        """
-        x = self.deform(x)
-        h = self.ngp_model.xyz_encoder(x)
-        sigmas = self.ngp_model.sigma_act(h[:, 0])
-        if return_feat:
-            return sigmas, h
-        return sigmas
-
-    def forward(self, x, d):
-        """
-        Inputs:
-            x: (N, 3) xyz in [-scale, scale]
-            d: (N, 3) directions
-
-        Outputs:
-            sigmas: (N)
-            rgbs: (N, 3)
-        """
-        sigmas, h = self.density(x, return_feat=True)
-        # d /= torch.norm(d, dim=-1, keepdim=True)
-        d = self.ngp_model.dir_encoder((d + 1.) / 2.)
-        rgbs = self.ngp_model.rgb_net(torch.cat([d, h], 1))
-        return sigmas, rgbs
-
-    def train(self, mode: bool = True):
-        if not isinstance(mode, bool):
-            raise ValueError("training mode is expected to be boolean")
-        self.training = mode
-        for module in self.children():
-            module.train(mode)
-        # ngp_model should always in be in eval mode
-        self.ngp_model.eval()
-        # if finetuning RGB branch
-        if self.ft_rgb:
-            self.ngp_model.rgb_net.train(mode)
-        return self
-
-    @property
-    def scale(self):
-        return self.ngp_model.scale
-
-    @property
-    def center(self):
-        return self.ngp_model.center
-
-    @property
-    def xyz_min(self):
-        return self.ngp_model.xyz_min
-
-    @property
-    def xyz_max(self):
-        return self.ngp_model.xyz_max
-
-    @property
-    def half_size(self):
-        return self.ngp_model.half_size
-
-    @property
-    def cascades(self):
-        return self.ngp_model.cascades
-
-    @property
-    def grid_size(self):
-        return self.ngp_model.grid_size
-
-    @property
-    def bg_color(self):
-        return self.ngp_model.bg_color
-
-    @property
-    def density_bitfield(self):
-        return self.ngp_model.density_bitfield
-
-
-class OffsetDeformNGP(DeformNGP):
+        self.ret_xyz = ret_xyz  # to render flow
 
     def _normalize_xyz(self, x):
         return (x - self.xyz_min) / (self.xyz_max - self.xyz_min)
@@ -155,29 +73,34 @@ class OffsetDeformNGP(DeformNGP):
             x: (N, 3) xyz in [-scale, scale]
 
         Outputs:
-            offsets: (N, 3)
             x': (N, 3), xyz after deformation
         """
-        x = x.detach()
-        x = self._normalize_xyz(x)  # [0, 1]
+        x = self._normalize_xyz(x)
         dx = self.delta_xyz(x)  # sigmoid output
         dx = dx * 2. - 1.  # to [-1, 1]
         return x + dx
 
-    def density(self, x, return_feat=False):
+    def density(self, x, return_feat=False, return_xyz=False):
         """
         Inputs:
             x: (N, 3) xyz after deformation
             return_feat: whether to return intermediate feature
+            return_xyz: whether to return xyz after deformation
 
         Outputs:
             sigmas: (N)
         """
-        h = self.ngp_model.xyz_encoder(x)
-        sigmas = self.ngp_model.sigma_act(h[:, 0])
+        x = self.deform(x)
+        h = self.xyz_encoder(x)
+        sigmas = self.sigma_act(h[:, 0])
+        ret_lst = [sigmas]
         if return_feat:
-            return sigmas, h
-        return sigmas
+            ret_lst.append(h)
+        if return_xyz:
+            ret_lst.append(x)
+        if len(ret_lst) == 1:
+            return ret_lst[0]
+        return ret_lst
 
     def forward(self, x, d):
         """
@@ -190,11 +113,26 @@ class OffsetDeformNGP(DeformNGP):
             sigmas: (N)
             rgbs: (N, 3)
         """
-        deform_x = self.deform(x)
-        sigmas, h = self.density(deform_x, return_feat=True)
-        # d /= torch.norm(d, dim=-1, keepdim=True)
-        d = self.ngp_model.dir_encoder((d + 1.) / 2.)
-        rgbs = self.ngp_model.rgb_net(torch.cat([d, h], 1))
-        # denormalize to original scale
-        deform_x = self._denormalize_xyz(deform_x)
-        return deform_x, sigmas, rgbs
+        sigmas, h, deform_x = self.density(
+            x, return_feat=True, return_xyz=True)
+        d = self.dir_encoder((d + 1.) / 2.)
+        rgbs = self.rgb_net(torch.cat([d, h], 1))
+        # return xyz
+        if self.ret_xyz:
+            # denormalize xyz to original scale
+            deform_x = self._denormalize_xyz(deform_x)
+            return deform_x, sigmas, rgbs
+        return sigmas, rgbs
+
+    def train(self, mode: bool = True):
+        super().train(mode)
+        # ngp_model should always in be in eval mode
+        for kv in self.named_modules():
+            if not kv[0]:  # model itself is ''
+                continue
+            if 'delta_xyz' in kv[0]:
+                continue
+            if self.ft_rgb and 'rgb_net' in kv[0]:
+                continue
+            kv[1].eval()
+        return self
