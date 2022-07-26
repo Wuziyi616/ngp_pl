@@ -81,8 +81,9 @@ class NeRFSystem(LightningModule):
     def configure_optimizers(self):
         self.opt = FusedAdam(
             self.model.parameters(), self.hparams.lr, eps=1e-15)
-        self.sch = CosineAnnealingLR(self.opt, self.hparams.num_epochs * 1000,
-                                     self.hparams.lr / 30)
+        self.sch = CosineAnnealingLR(self.opt,
+                                     int(self.hparams.num_epochs * 1000),
+                                     self.hparams.lr / 10)
 
         return ([self.opt], [{
             'scheduler': self.sch,
@@ -190,11 +191,9 @@ if __name__ == '__main__':
     os.makedirs(dir_path, exist_ok=True)
     ckpt_cb = ModelCheckpoint(
         dirpath=dir_path,
-        filename='{epoch:d}',
+        every_n_train_steps=int(hparams.num_epochs * 1000),
+        save_last=True,
         save_weights_only=True,
-        every_n_epochs=hparams.num_epochs,
-        save_on_train_epoch_end=True,
-        save_top_k=-1,
     )
     lr_cb = LearningRateMonitor(logging_interval='step')
     callbacks = [ckpt_cb, lr_cb]
@@ -206,7 +205,7 @@ if __name__ == '__main__':
     )
 
     trainer = Trainer(
-        max_epochs=hparams.num_epochs,
+        max_steps=int(hparams.num_epochs * 1000),
         check_val_every_n_epoch=1000000,  # no validation in timing
         callbacks=callbacks,
         logger=logger,
@@ -238,7 +237,3 @@ if __name__ == '__main__':
             [imageio.imread(img) for img in imgs[1::2]],
             fps=30,
             macro_block_size=1)
-
-    if not hparams.val_only:  # save slimmed ckpt for the last epoch
-        ckpt_ = slim_ckpt(f'{dir_path}/epoch={hparams.num_epochs-1}.ckpt')
-        torch.save(ckpt_, f'{dir_path}/epoch={hparams.num_epochs-1}_slim.ckpt')

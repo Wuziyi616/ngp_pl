@@ -53,7 +53,10 @@ def get_opts():
         default=16384,
         help='number of rays in a batch')
     parser.add_argument(
-        '--num_epochs', type=int, default=2, help='number of training epochs')
+        '--num_epochs',
+        type=float,
+        default=2,
+        help='number of training epochs')
     parser.add_argument(
         '--ft_num_epochs', type=float, default=0.2, help='number of FT epochs')
     parser.add_argument(

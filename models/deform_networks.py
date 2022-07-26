@@ -44,12 +44,14 @@ class DeformNGP(NGP):
             n_input_dims=3,
             n_output_dims=3,
             encoding_config={
-                "otype": "HashGrid",
+                "otype": "Grid",
+                "type": "Hash",
                 "n_levels": L,
                 "n_features_per_level": F,
                 "log2_hashmap_size": log2_T,
                 "base_resolution": N_min,
                 "per_level_scale": b,
+                "interpolation": "Linear"
             },
             network_config={
                 "otype": "FullyFusedMLP",
