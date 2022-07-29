@@ -25,10 +25,10 @@ def shiftscale_inv_depthloss(disp_pred, disp_gt):
 
 class NeRFLoss(nn.Module):
 
-    def __init__(self):
+    def __init__(self, lambda_opa=1e-3):
         super().__init__()
 
-        self.lambda_opa = 1e-3
+        self.lambda_opa = lambda_opa
 
     def forward(self, results, target, **kwargs):
         d = {}
@@ -43,8 +43,8 @@ class NeRFLoss(nn.Module):
 
 class DeformNeRFLoss(NeRFLoss):
 
-    def __init__(self, lambda_flow=10.):
-        super().__init__()
+    def __init__(self, lambda_opa=1e-3, lambda_flow=10.):
+        super().__init__(lambda_opa=lambda_opa)
 
         # TODO: no opacity loss because object geometry shouldn't change?
         self.lambda_opa = 0.
@@ -55,6 +55,7 @@ class DeformNeRFLoss(NeRFLoss):
 
         # flow
         if 'flow' in results:
-            d['flow'] = self.lambda_flow * (results['flow'] - target['flow'])**2
+            d['flow'] = self.lambda_flow * (results['flow'] -
+                                            target['flow'])**2
 
         return d

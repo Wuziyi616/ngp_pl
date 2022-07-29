@@ -4,13 +4,10 @@ import time
 import warnings
 import wandb
 
-import torch
-
 # data
 from utils import build_dataloader
 
 # models
-from models.rendering import MAX_SAMPLES
 from models.deform_networks import DeformNGP
 
 # optimizer, losses
@@ -36,7 +33,8 @@ class NeRFSystem(BaseNeRFSystem):
         super().__init__(hparams, train_dataset)
 
         self.epoch_it = int(hparams.def_num_epochs * 1000)
-        self.loss = DeformNeRFLoss()
+        self.loss = DeformNeRFLoss(
+            lambda_opa=hparams.occ_loss_w, lambda_flow=hparams.flow_loss_w)
         self.model = DeformNGP(
             ckpt_path=hparams.ckpt_path,
             scale=hparams.scale,
@@ -62,42 +60,6 @@ class NeRFSystem(BaseNeRFSystem):
             ]
         self.opt = FusedAdam(params_list, lr=self.hparams.def_lr, eps=1e-15)
         return self.opt
-
-    def on_train_start(self):
-        # TODO: we should update new density grid for new inputs
-        K = torch.cuda.FloatTensor(self.train_dataset.K)
-        poses = torch.cuda.FloatTensor(self.train_dataset.poses)
-        self.model.mark_invisible_cells(K, poses, self.train_dataset.img_wh)
-
-    def training_step(self, batch, batch_nb):
-        if self.global_step % self.S == 0:
-            self.model.update_density_grid(
-                0.01 * MAX_SAMPLES / 3**0.5,
-                warmup=self.global_step < 256,
-                erode=hparams.dataset_name == 'colmap')
-
-        results = self(batch, split='train')
-        loss_d = self.loss(results, batch)
-        loss = sum(lo.mean() for lo in loss_d.values())
-
-        with torch.no_grad():
-            self.train_psnr(results['rgb'], batch['rgb'])
-
-            step = self.epoch_it * self.hparams.timestep + self.global_step
-            log_dict = {
-                'train/lr': self.opt.param_groups[0]['lr'],
-                'train/loss': loss.detach().item(),
-                'train/psnr': self.train_psnr.compute().item(),
-                'train/s_per_ray':
-                results['total_samples'] / len(batch['rays']),
-            }
-            log_dict.update({
-                f'train/{k}_loss': v.mean().item()
-                for k, v in loss_d.items()
-            })
-            wandb.log(log_dict, step=step)
-
-        return loss
 
 
 def build_trainer(hparams, callbacks=None):

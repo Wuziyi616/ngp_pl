@@ -96,6 +96,8 @@ def get_opts():
     parser.add_argument(
         '--def_lr', type=float, default=1e-3, help='deformation learning rate')
     parser.add_argument(
+        '--occ_loss_w', type=float, default=1e-3, help='opacity loss')
+    parser.add_argument(
         '--flow_loss_w', type=float, default=1., help='flow loss')
 
     parser.add_argument(

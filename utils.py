@@ -1,10 +1,13 @@
+import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 
 import torch
 from torch.utils.data import DataLoader
+import torchvision.utils as vutils
 
 from datasets import dataset_dict
+from cvbase.optflow import flow2rgb
 
 
 def build_dataloader(hparams):
@@ -76,6 +79,25 @@ def slim_ckpt(ckpt_path):
     return ckpt['state_dict']
 
 
+def depth2img(depth):
+    depth = (depth - depth.min()) / (depth.max() - depth.min())
+    depth_img = cv2.applyColorMap((depth * 255).astype(np.uint8),
+                                  cv2.COLORMAP_TURBO)
+
+    return depth_img
+
+
+def flow2img(flow):
+    """flow: [H, W, 2], torch.Tensor, in camera coordinate."""
+    if isinstance(flow, torch.Tensor):
+        flow = flow.cpu().numpy()
+    # TODO:
+    flow[np.abs(flow) < 1e-3] = 0.
+    flow = flow2rgb(flow)
+    flow = np.round(flow * 255.).astype(np.uint8)
+    return flow
+
+
 def show_flow(flow, h=256, w=256, show=True):
     """Plot the flow map.
 
@@ -93,3 +115,26 @@ def show_flow(flow, h=256, w=256, show=True):
     plt.imshow(flow)
     if show:
         plt.show()
+
+
+@torch.no_grad()
+def make_img_grids(imgs, pad_value=1):
+    """Rearrange images into grids.
+
+    Inputs:
+        imgs: [N, H, W, 3]
+    """
+    if isinstance(imgs, np.ndarray):
+        imgs = torch.from_numpy(imgs).float()
+    if imgs.max().item() > 1.:
+        imgs = imgs / 255.
+    if imgs.shape[-1] == 3:
+        imgs = imgs.permute(0, 3, 1, 2).contiguous()
+    N = imgs.shape[0]
+    nrow = int(np.floor(np.sqrt(N)))
+    imgs = vutils.make_grid(
+        imgs, nrow=nrow, normalize=False, pad_value=pad_value)
+    # back to numpy savesable image
+    imgs = imgs.permute(1, 2, 0).contiguous().cpu().numpy()
+    imgs = np.round(imgs * 255.).astype(np.uint8)
+    return imgs

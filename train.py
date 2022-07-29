@@ -2,10 +2,10 @@ import os
 import glob
 import time
 
-import cv2
 import imageio
 import warnings
 import numpy as np
+import wandb
 
 import torch
 from einops import rearrange
@@ -30,25 +30,16 @@ from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 # pytorch-lightning
 from pytorch_lightning.plugins import DDPPlugin
 from pytorch_lightning import LightningModule, Trainer
-from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
-from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.utilities.seed import seed_everything
 from pytorch_lightning.utilities.distributed import all_gather_ddp_if_available
 
 # misc.
 from opt import get_opts
-from utils import slim_ckpt
+from utils import depth2img, make_img_grids
 
 warnings.filterwarnings("ignore")
 seed_everything(19870203)
-
-
-def depth2img(depth):
-    depth = (depth - depth.min()) / (depth.max() - depth.min())
-    depth_img = cv2.applyColorMap((depth * 255).astype(np.uint8),
-                                  cv2.COLORMAP_TURBO)
-
-    return depth_img
 
 
 class NeRFSystem(LightningModule):
@@ -58,7 +49,7 @@ class NeRFSystem(LightningModule):
         self.save_hyperparameters(hparams)
         self.train_dataset = train_dataset
 
-        self.loss = NeRFLoss()
+        self.loss = NeRFLoss(lambda_opa=hparams.occ_loss_w)
         self.train_psnr = PeakSignalNoiseRatio(data_range=1)
         self.val_psnr = PeakSignalNoiseRatio(data_range=1)
         self.val_ssim = StructuralSimilarityIndexMeasure(data_range=1)
@@ -108,12 +99,25 @@ class NeRFSystem(LightningModule):
 
         with torch.no_grad():
             self.train_psnr(results['rgb'], batch['rgb'])
-        self.log('train/loss', loss)
-        self.log('train/s_per_ray',
-                 results['total_samples'] / len(batch['rays']))
-        self.log('train/psnr', self.train_psnr, prog_bar=True)
+
+            if self.global_rank == 0:
+                s_per_ray = results['total_samples'] / len(batch['rays'])
+                log_dict = {
+                    'train/lr': self.opt.param_groups[0]['lr'],
+                    'train/loss': loss.detach().item(),
+                    'train/psnr': self.train_psnr.compute().item(),
+                    'train/s_per_ray': s_per_ray,
+                }
+                log_dict.update({
+                    f'train/{k}_loss': v.mean().item()
+                    for k, v in loss_d.items()
+                })
+                wandb.log(log_dict, step=self._get_log_step())
 
         return loss
+
+    def _get_log_step(self):
+        return self.global_step
 
     def on_validation_start(self):
         torch.cuda.empty_cache()
@@ -144,33 +148,50 @@ class NeRFSystem(LightningModule):
             logs['lpips'] = self.val_lpips.compute()
             self.val_lpips.reset()
 
-        if not self.hparams.no_save_test:  # save test image to disk
+        # save test image to disk
+        if not self.hparams.no_save_test and self.global_rank == 0:
             idx = batch['idx']
             rgb_pred = rearrange(
                 results['rgb'].cpu().numpy(), '(h w) c -> h w c', h=h)
             rgb_pred = np.round(rgb_pred * 255.).astype(np.uint8)
             # depth = depth2img(
             #     rearrange(results['depth'].cpu().numpy(), '(h w) -> h w', h=h))
-            imageio.imsave(
-                os.path.join(self.val_dir, f'{idx:03d}.png'), rgb_pred)
+            fn = f'{self.hparams.timestep}-{idx:03d}-pred_img.png'
+            imageio.imsave(os.path.join(self.val_dir, fn), rgb_pred)
+            logs['rgb_pred_img'] = rgb_pred
             # imageio.imsave(
             #     os.path.join(self.val_dir, f'{idx:03d}_d.png'), depth)
+            rgb_gt = rearrange(
+                batch['rgb'].cpu().numpy(), '(h w) c -> h w c', h=h)
+            rgb_gt = np.round(rgb_gt * 255.).astype(np.uint8)
+            fn = f'{self.hparams.timestep}-{idx:03d}-gt_img.png'
+            imageio.imsave(os.path.join(self.val_dir, fn), rgb_gt)
+            logs['rgb_gt_img'] = rgb_gt
 
         return logs
 
     def validation_epoch_end(self, outputs):
-        psnrs = torch.stack([x['psnr'] for x in outputs])
-        mean_psnr = all_gather_ddp_if_available(psnrs).mean()
-        self.log('test/psnr', mean_psnr, prog_bar=True)
+        log_dict = {}
+        for k in outputs[0].keys():
+            # numerical results
+            if not k.endswith('_img'):
+                v = torch.stack([x[k] for x in outputs])
+                v = all_gather_ddp_if_available(v).mean()
+                log_dict[f'test/{k}'] = v.item()
 
-        ssims = torch.stack([x['ssim'] for x in outputs])
-        mean_ssim = all_gather_ddp_if_available(ssims).mean()
-        self.log('test/ssim', mean_ssim)
+        print('\n\n')
+        print('\n'.join(f'{k}: {v:.4f}' for k, v in log_dict.items()))
+        print('\n\n')
 
-        if self.hparams.eval_lpips:
-            lpipss = torch.stack([x['lpips'] for x in outputs])
-            mean_lpips = all_gather_ddp_if_available(lpipss).mean()
-            self.log('test/lpips_vgg', mean_lpips)
+        if self.global_rank == 0:
+            for k in outputs[0].keys():
+                # visualization results
+                if k.endswith('_img'):
+                    v = np.stack([x[k] for x in outputs])
+                    v = make_img_grids(v, pad_value=0 if 'flow' in k else 1)
+                    log_dict[f'test/{k[:-4]}'] = wandb.Image(v)
+
+        wandb.log(log_dict, step=self._get_log_step(), commit=True)
 
     def get_progress_bar_dict(self):
         # don't show the version number
@@ -195,14 +216,10 @@ if __name__ == '__main__':
         save_last=True,
         save_weights_only=True,
     )
-    lr_cb = LearningRateMonitor(logging_interval='step')
-    callbacks = [ckpt_cb, lr_cb]
+    callbacks = [ckpt_cb]
 
-    logger = WandbLogger(
-        project='ngp_pl',
-        name=hparams.exp_name,
-        save_dir=dir_path,
-    )
+    wandb.init(project='ngp_pl', name=hparams.exp_name, dir=dir_path)
+    logger = False
 
     trainer = Trainer(
         max_steps=int(hparams.num_epochs * 1000),

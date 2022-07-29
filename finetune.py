@@ -1,19 +1,13 @@
 import os
 import time
 
-import imageio
 import warnings
-import numpy as np
 import wandb
 
 import torch
-from einops import rearrange
 
 # data
 from utils import build_dataloader
-
-# models
-from models.rendering import MAX_SAMPLES
 
 # optimizer, losses
 from apex.optimizers import FusedAdam
@@ -22,10 +16,8 @@ from apex.optimizers import FusedAdam
 from pytorch_lightning.plugins import DDPPlugin
 from pytorch_lightning import Trainer
 from pytorch_lightning.utilities.seed import seed_everything
-from pytorch_lightning.utilities.distributed import all_gather_ddp_if_available
 
 # misc.
-from train import depth2img
 from train import NeRFSystem as BaseNeRFSystem
 from opt import get_opts
 
@@ -47,87 +39,8 @@ class NeRFSystem(BaseNeRFSystem):
             self.model.parameters(), self.hparams.ft_lr, eps=1e-15)
         return self.opt
 
-    def training_step(self, batch, batch_nb):
-        if self.global_step % self.S == 0:
-            self.model.update_density_grid(
-                0.01 * MAX_SAMPLES / 3**0.5,
-                warmup=self.global_step < 256,
-                erode=hparams.dataset_name == 'colmap')
-
-        results = self(batch, split='train')
-        loss_d = self.loss(results, batch)
-        loss = sum(lo.mean() for lo in loss_d.values())
-
-        with torch.no_grad():
-            self.train_psnr(results['rgb'], batch['rgb'])
-
-            step = self.epoch_it * self.hparams.timestep + self.global_step
-            log_dict = {
-                'train/lr': self.opt.param_groups[0]['lr'],
-                'train/loss': loss.detach().item(),
-                'train/psnr': self.train_psnr.compute().item(),
-                'train/s_per_ray':
-                results['total_samples'] / len(batch['rays']),
-            }
-            wandb.log(log_dict, step=step)
-
-        return loss
-
-    def validation_step(self, batch, batch_nb):
-        rgb_gt = batch['rgb']
-        results = self(batch, split='test')
-
-        logs = {}
-        # compute each metric per image
-        self.val_psnr(results['rgb'], rgb_gt)
-        logs['psnr'] = self.val_psnr.compute()
-        self.val_psnr.reset()
-
-        w, h = self.train_dataset.img_wh
-        rgb_pred = rearrange(results['rgb'], '(h w) c -> 1 c h w', h=h)
-        rgb_gt = rearrange(rgb_gt, '(h w) c -> 1 c h w', h=h)
-        self.val_ssim(rgb_pred, rgb_gt)
-        logs['ssim'] = self.val_ssim.compute()
-        self.val_ssim.reset()
-        self.val_lpips(
-            torch.clip(rgb_pred * 2. - 1., -1., 1.),
-            torch.clip(rgb_gt * 2. - 1., -1., 1.))
-        logs['lpips'] = self.val_lpips.compute()
-        self.val_lpips.reset()
-
-        if not self.hparams.no_save_test:  # save test image to disk
-            idx = batch['idx']
-            rgb_pred = rearrange(
-                results['rgb'].cpu().numpy(), '(h w) c -> h w c', h=h)
-            rgb_pred = np.round(rgb_pred * 255.).astype(np.uint8)
-            # depth = depth2img(
-            #     rearrange(results['depth'].cpu().numpy(), '(h w) -> h w', h=h))
-            fn = f'{self.hparams.timestep}-{idx:03d}.png'
-            imageio.imsave(os.path.join(self.val_dir, fn), rgb_pred)
-            # imageio.imsave(
-            #     os.path.join(self.val_dir, f'{idx:03d}_d.png'), depth)
-
-        return logs
-
-    def validation_epoch_end(self, outputs):
-        psnrs = torch.stack([x['psnr'] for x in outputs])
-        ssims = torch.stack([x['ssim'] for x in outputs])
-        lpipss = torch.stack([x['lpips'] for x in outputs])
-
-        mean_psnr = all_gather_ddp_if_available(psnrs).mean()
-        mean_ssim = all_gather_ddp_if_available(ssims).mean()
-        mean_lpips = all_gather_ddp_if_available(lpipss).mean()
-
-        step = self.epoch_it * self.hparams.timestep + self.global_step
-        log_dict = {
-            'test/psnr': mean_psnr.item(),
-            'test/ssim': mean_ssim.item(),
-            'test/lpips_vgg': mean_lpips.item(),
-        }
-        print('\n\n')
-        print('\n'.join(f'{k}: {v:.4f}' for k, v in log_dict.items()))
-        print('\n\n')
-        wandb.log(log_dict, step=step, commit=True)
+    def _get_log_step(self):
+        return self.epoch_it * self.hparams.timestep + self.global_step
 
 
 def build_trainer(hparams, callbacks=None):

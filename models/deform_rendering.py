@@ -147,13 +147,15 @@ def __render_rays_train(model, rays_o, rays_d, hits_t, w2c, fx, **kwargs):
     3. Use volume rendering to combine the result (front to back compositing
        and early stop the ray if its transmittance is below a threshold)
     """
+    exp_step_factor = kwargs.get('exp_step_factor', 0.)
     results = {}
 
-    rays_a, xyzs, dirs, deltas, ts = \
+    rays_a, xyzs, dirs, deltas, ts, total_samples = \
         RayMarcher.apply(
             rays_o, rays_d, hits_t[:, 0], model.density_bitfield,
             model.cascades, model.scale,
-            kwargs.get('exp_step_factor', 0.), model.grid_size, MAX_SAMPLES)
+            exp_step_factor, model.grid_size, MAX_SAMPLES)
+    results['total_samples'] = total_samples
 
     deform_xyzs, sigmas, rgbs = model(xyzs, dirs)
 

@@ -3,10 +3,8 @@ import time
 
 import imageio
 import warnings
-import numpy as np
 import wandb
 
-import torch
 from einops import rearrange
 
 # data
@@ -20,28 +18,16 @@ from models.deform_rendering import deform_render
 from torchmetrics import MeanSquaredError
 
 # pytorch-lightning
-from pytorch_lightning.plugins import DDPPlugin
-from pytorch_lightning import Trainer
 from pytorch_lightning.utilities.seed import seed_everything
-from pytorch_lightning.utilities.distributed import all_gather_ddp_if_available
 
 # misc.
+from deform import build_trainer
 from deform import NeRFSystem as BaseNeRFSystem
 from opt import get_opts
-from cvbase.optflow import flow2rgb
+from utils import flow2img
 
 warnings.filterwarnings("ignore")
 seed_everything(19870203)
-
-
-def flow2img(flow):
-    """flow: [H, W, 2], torch.Tensor."""
-    # h, w = flow.shape[:2]
-    # flow[..., 0] = flow[..., 0] / w
-    # flow[..., 1] = flow[..., 1] / h
-    flow = flow2rgb(flow.cpu().numpy())
-    flow = np.round(flow * 255.).astype(np.uint8)
-    return flow
 
 
 class NeRFSystem(BaseNeRFSystem):
@@ -75,43 +61,16 @@ class NeRFSystem(BaseNeRFSystem):
         )
 
     def validation_step(self, batch, batch_nb):
-        rgb_gt, flow_gt = batch['rgb'], batch['flow']
+        logs = super().validation_step(batch, batch_nb)
+
+        flow_gt = batch['flow']
         results = self(batch, split='test')
 
-        logs = {}
-        # compute each metric per image
-        self.val_psnr(results['rgb'], rgb_gt)
-        logs['psnr'] = self.val_psnr.compute()
-        self.val_psnr.reset()
-
-        w, h = self.train_dataset.img_wh
-        rgb_pred = rearrange(results['rgb'], '(h w) c -> 1 c h w', h=h)
-        rgb_gt = rearrange(rgb_gt, '(h w) c -> 1 c h w', h=h)
-        self.val_ssim(rgb_pred, rgb_gt)
-        logs['ssim'] = self.val_ssim.compute()
-        self.val_ssim.reset()
-        self.val_lpips(
-            torch.clip(rgb_pred * 2. - 1., -1., 1.),
-            torch.clip(rgb_gt * 2. - 1., -1., 1.))
-        logs['lpips'] = self.val_lpips.compute()
-        self.val_lpips.reset()
-
-        # flow
-        self.val_flow_mse(results['flow'], flow_gt)
-        logs['flow_mse'] = self.val_flow_mse.compute()
-        self.val_flow_mse.reset()
-
-        if not self.hparams.no_save_test:  # save test image to disk
+        # save test image to disk
+        if not self.hparams.no_save_test and self.global_rank == 0:
             idx = batch['idx']
-            rgb_pred = rearrange(
-                results['rgb'].cpu().numpy(), '(h w) c -> h w c', h=h)
-            rgb_pred = np.round(rgb_pred * 255.).astype(np.uint8)
-            # depth = depth2img(
-            #     rearrange(results['depth'].cpu().numpy(), '(h w) -> h w', h=h))
-            fn = f'{self.hparams.timestep}-{idx:03d}.png'
-            imageio.imsave(os.path.join(self.val_dir, fn), rgb_pred)
-            # imageio.imsave(
-            #     os.path.join(self.val_dir, f'{idx:03d}_d.png'), depth)
+            w, h = self.train_dataset.img_wh
+            # flow visualization
             flow_pred = rearrange(
                 results['flow'] - batch['bg_flow'], '(h w) c -> h w c', h=h)
             flow_pred = flow2img(flow_pred)
@@ -120,49 +79,12 @@ class NeRFSystem(BaseNeRFSystem):
             flow_gt = flow2img(flow_gt)
             fn = f'{self.hparams.timestep}-{idx:03d}-pred_flow.png'
             imageio.imsave(os.path.join(self.val_dir, fn), flow_pred)
+            logs['flow_pred_img'] = flow_pred
             fn = f'{self.hparams.timestep}-{idx:03d}-gt_flow.png'
             imageio.imsave(os.path.join(self.val_dir, fn), flow_gt)
+            logs['flow_gt_img'] = flow_gt
 
         return logs
-
-    def validation_epoch_end(self, outputs):
-        psnrs = torch.stack([x['psnr'] for x in outputs])
-        ssims = torch.stack([x['ssim'] for x in outputs])
-        lpipss = torch.stack([x['lpips'] for x in outputs])
-        flow_mses = torch.stack([x['flow_mse'] for x in outputs])
-
-        mean_psnr = all_gather_ddp_if_available(psnrs).mean()
-        mean_ssim = all_gather_ddp_if_available(ssims).mean()
-        mean_lpips = all_gather_ddp_if_available(lpipss).mean()
-        mean_flow_mse = all_gather_ddp_if_available(flow_mses).mean()
-
-        step = self.epoch_it * self.hparams.timestep + self.global_step
-        log_dict = {
-            'test/psnr': mean_psnr.item(),
-            'test/ssim': mean_ssim.item(),
-            'test/lpips_vgg': mean_lpips.item(),
-            'test/flow_mse': mean_flow_mse.item(),
-        }
-        print('\n\n')
-        print('\n'.join(f'{k}: {v:.4f}' for k, v in log_dict.items()))
-        print('\n\n')
-        wandb.log(log_dict, step=step, commit=True)
-
-
-def build_trainer(hparams, callbacks=None):
-    return Trainer(
-        max_steps=int(hparams.def_num_epochs * 1000),
-        check_val_every_n_epoch=1000000,  # no validation in timing
-        callbacks=callbacks,
-        logger=False,
-        enable_model_summary=False,
-        accelerator='gpu',
-        devices=hparams.num_gpus,
-        strategy=DDPPlugin(
-            find_unused_parameters=False) if hparams.num_gpus > 1 else None,
-        num_sanity_val_steps=-1 if hparams.val_only else 0,
-        precision=16,
-    )
 
 
 if __name__ == '__main__':
