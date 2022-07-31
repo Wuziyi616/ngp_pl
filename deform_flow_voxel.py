@@ -11,7 +11,7 @@ from einops import rearrange
 from utils import build_dataloader
 
 # models
-from models.deform_networks import DeformNGP
+from models.deform_voxel_network import DeformSVOXNGP
 from models.deform_rendering import deform_render
 
 # metrics
@@ -21,8 +21,8 @@ from torchmetrics import MeanSquaredError
 from pytorch_lightning.utilities.seed import seed_everything
 
 # misc.
-from deform import build_trainer
-from deform import NeRFSystem as BaseNeRFSystem
+from deform_voxel import build_trainer
+from deform_voxel import NeRFSystem as BaseNeRFSystem
 from opt import get_opts
 from utils import flow2img
 
@@ -36,9 +36,10 @@ class NeRFSystem(BaseNeRFSystem):
         super().__init__(hparams, train_dataset)
 
         self.val_flow_mse = MeanSquaredError()
-        self.model = DeformNGP(
+        self.model = DeformSVOXNGP(
             ckpt_path=hparams.ckpt_path,
             scale=hparams.scale,
+            init_reso=128,
             black_bg=hparams.black_bg,
             ft_rgb=hparams.ft_rgb,
             ret_xyz=True,
@@ -107,8 +108,14 @@ if __name__ == '__main__':
         if system is None:
             system = NeRFSystem(hparams, train_set)
             trainer.validate(system, test_loader)
+            # sanity-check
+            # system.model.merge_deformation()
+            # trainer.validate(system, test_loader)
             continue
         else:
+            # merge previous deformation field to grid data
+            system.model.merge_deformation()
+            # keep the same model params, update dataset
             state_dict = system.model.state_dict()
             system = NeRFSystem(hparams, train_set)
             system.model.load_state_dict(state_dict)

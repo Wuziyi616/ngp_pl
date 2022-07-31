@@ -25,13 +25,6 @@ def deform_render(model, rays, w2c, bg_flow, fx, wh, **kwargs):
     """
 
     rays_o, rays_d = rays[:, 0:3].contiguous(), rays[:, 3:6].contiguous()
-    """
-    camera = w2c.reshape(3, 4)
-    rays_o = torch.zeros_like(rays_o).type_as(rays_o)
-    rays_d = (rays_d @ camera[:3, :3].T).type_as(rays_d)
-    w2c = torch.tensor([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0]).type_as(w2c)
-    """
-
     _, hits_t, _ = RayAABBIntersector.apply(rays_o, rays_d, model.center,
                                             model.half_size, 1)
     hits_t[(hits_t[:, 0, 0] >= 0) & (hits_t[:, 0, 0] < NEAR_DISTANCE), 0,

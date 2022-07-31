@@ -61,8 +61,6 @@ def build_trainer(hparams, callbacks=None):
 
 if __name__ == '__main__':
     hparams = get_opts()
-    if hparams.val_only and (not hparams.ckpt_path):
-        raise ValueError('You need to provide a @ckpt_path for validation!')
 
     dir_path = f'ckpts/{hparams.exp_name}'
     os.makedirs(dir_path, exist_ok=True)
