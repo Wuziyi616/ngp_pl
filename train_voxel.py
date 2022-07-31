@@ -3,6 +3,7 @@ import time
 
 import warnings
 import wandb
+import torch
 
 # data
 from utils import build_dataloader
@@ -34,8 +35,6 @@ class NeRFSystem(BaseNeRFSystem):
 
 if __name__ == '__main__':
     hparams = get_opts()
-    if hparams.val_only and (not hparams.ckpt_path):
-        raise ValueError('You need to provide a @ckpt_path for validation!')
 
     train_set, train_loader, test_loader = build_dataloader(hparams)
     system = NeRFSystem(hparams, train_set)
@@ -66,4 +65,4 @@ if __name__ == '__main__':
     print(f'Training took {end_t - start_t:.2f} seconds')
     trainer.validate(system, test_loader)
 
-    system.model.save(os.path.join(dir_path, 'last.ckpt'))
+    torch.save(system.model.state_dict(), os.path.join(dir_path, 'last.ckpt'))

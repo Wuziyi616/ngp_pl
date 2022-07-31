@@ -82,6 +82,8 @@ class NeRFSystem(LightningModule):
         }])
 
     def on_train_start(self):
+        self.start_t = time.time()
+        # mask cells according to the camera poses
         K = torch.cuda.FloatTensor(self.train_dataset.K)
         poses = torch.cuda.FloatTensor(self.train_dataset.poses)
         self.model.mark_invisible_cells(K, poses, self.train_dataset.img_wh)
@@ -115,6 +117,10 @@ class NeRFSystem(LightningModule):
                 wandb.log(log_dict, step=self._get_log_step())
 
         return loss
+
+    def on_train_end(self):
+        used_t = time.time() - self.start_t
+        wandb.log({'train/used_time': used_t}, step=self._get_log_step())
 
     def _get_log_step(self):
         return self.global_step

@@ -90,13 +90,13 @@ def get_opts():
         default=False,
         help='whether to save test image and video')
 
-    parser.add_argument('--lr', type=float, default=2e-2, help='learning rate')
+    parser.add_argument('--lr', type=float, default=1e-1, help='learning rate')
     parser.add_argument(
-        '--ft_lr', type=float, default=1e-2, help='finetuning learning rate')
+        '--ft_lr', type=float, default=5e-2, help='finetuning learning rate')
     parser.add_argument(
         '--def_lr', type=float, default=1e-3, help='deformation learning rate')
     parser.add_argument(
-        '--occ_loss_w', type=float, default=1e-3, help='opacity loss')
+        '--occ_loss_w', type=float, default=1e-2, help='opacity loss')
     parser.add_argument(
         '--flow_loss_w', type=float, default=1., help='flow loss')
 
