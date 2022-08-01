@@ -24,7 +24,7 @@ def grid_sample(data, grid, align_corners=False):
     # https://discuss.pytorch.org/t/surprising-convention-for-grid-sample-coordinates/79997/3
     # the 3-tuple of `grid` is treated as (k, j, i), i.e. (z, y, x)
     return F.grid_sample(
-        data,
+        data.permute(0, 1, 4, 3, 2),
         grid,
         mode='bilinear',
         padding_mode='border',
@@ -105,40 +105,24 @@ class SimpleGrid(nn.Module):
             self.density_grid.data, src_coords, transpose=False)
         self.sh_grid.data[0][:, mask] = point_sample(
             self.sh_grid.data, src_coords, transpose=False)
-        """
-        self.density_grid = nn.Parameter(
-            grid_sample(
-                self.density_grid.data,
-                src_coords,
-                align_corners=True,
-            ))
-        self.sh_grid = nn.Parameter(
-            grid_sample(
-                self.sh_grid.data,
-                src_coords,
-                align_corners=True,
-            ))
-        """
 
     @torch.no_grad()
     def upsample2x(self):
         """Upsample grids by 2x."""
         print(f'Upsample {self.grid_size} --> {self.grid_size * 2}')
         print('Please re-init optimizer in the Trainer!')
-        self.density_grid = nn.Parameter(
-            F.interpolate(
-                self.density_grid.data,
-                scale_factor=2,
-                mode='trilinear',
-                align_corners=False,
-            ))
-        self.sh_grid = nn.Parameter(
-            F.interpolate(
-                self.sh_grid.data,
-                scale_factor=2,
-                mode='trilinear',
-                align_corners=False,
-            ))
+        self.density_grid.data = F.interpolate(
+            self.density_grid.data,
+            scale_factor=2,
+            mode='trilinear',
+            align_corners=False,
+        )
+        self.sh_grid.data = F.interpolate(
+            self.sh_grid.data,
+            scale_factor=2,
+            mode='trilinear',
+            align_corners=False,
+        )
         self.grid_size *= 2
 
 

@@ -34,8 +34,9 @@ def create_meshgrid3d(
         ys = (ys / (height - 1) - 0.5) * 2
         zs = (zs / (depth - 1) - 0.5) * 2
     # generate grid by stacking coordinates
-    xs, ys, zs = torch.meshgrid([zs, xs, ys])
-    base_grid = torch.stack([zs, ys, xs], dim=-1)  # DxWxHx3, (z, y, x)
+    # xs, ys, zs = torch.meshgrid([zs, xs, ys])
+    # base_grid = torch.stack([zs, ys, xs], dim=-1)  # DxWxHx3, (z, y, x)
+    base_grid = torch.stack(torch.meshgrid([zs, xs, ys]), dim=-1)  # DxWxHx3
     return base_grid.unsqueeze(0)
 
 

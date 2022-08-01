@@ -142,7 +142,8 @@ __global__ void composite_train_deform_bw_kernel(
     int samples = 0;
     scalar_t R = rgb[ray_idx][0], G = rgb[ray_idx][1], B = rgb[ray_idx][2];
     scalar_t O = opacity[ray_idx], D = depth[ray_idx];
-    scalar_t T = 1.0f, r = 0.0f, g = 0.0f, b = 0.0f, d = 0.0f;
+    scalar_t F0 = flow[ray_idx][0], F1 = flow[ray_idx][1];
+    scalar_t T = 1.0f, r = 0.0f, g = 0.0f, b = 0.0f, d = 0.0f, f0 = 0.0f, f1 = 0.0f;
 
     while (samples < N_samples) {
         const int s = start_idx + samples;
@@ -160,6 +161,10 @@ __global__ void composite_train_deform_bw_kernel(
         const scalar_t w2c_z = r7 * x + r8 * y + r9 * z + t3;
         const scalar_t w2c_z_2 = w2c_z * w2c_z;
 
+        const scalar_t f0_inc = fx * w2c_x / w2c_z, f1_inc = fy * w2c_y / w2c_z;
+        f0 += w * f0_inc;
+        f1 += w * f1_inc;
+
         dL_ddeformed_xyzs[s][0] = dL_dflow[ray_idx][0] * w * fx * (r1 / w2c_z - r7 * w2c_x / w2c_z_2) +
                                   dL_dflow[ray_idx][1] * w * fy * (r4 / w2c_z - r7 * w2c_y / w2c_z_2);
         dL_ddeformed_xyzs[s][1] = dL_dflow[ray_idx][0] * w * fx * (r2 / w2c_z - r8 * w2c_x / w2c_z_2) +
@@ -172,15 +177,14 @@ __global__ void composite_train_deform_bw_kernel(
         dL_drgbs[s][2] = dL_drgb[ray_idx][2]*w;
 
         dL_dsigmas[s] = deltas[s] * (
+            dL_dflow[ray_idx][0] * (f0_inc * T - (F0 - f0)) + 
+            dL_dflow[ray_idx][1] * (f1_inc * T - (F1 - f1)) + 
             dL_drgb[ray_idx][0]*(rgbs[s][0]*T-(R-r)) + 
             dL_drgb[ray_idx][1]*(rgbs[s][1]*T-(G-g)) + 
             dL_drgb[ray_idx][2]*(rgbs[s][2]*T-(B-b)) + 
             dL_dopacity[ray_idx]*(1-O) + 
             dL_ddepth[ray_idx]*(ts[s]*T-(D-d))
         );
-        // mathematically flow should also contribute to sigmas' gradient
-        // but we apply a stop_grad here, because deformation field shouldn't
-        // affect the density field (i.e. the geometry of the object)
 
         if (T <= T_threshold) break; // ray has enough opacity
         samples++;
