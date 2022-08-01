@@ -1,5 +1,3 @@
-import time
-
 import torch
 from torch import nn
 
@@ -34,9 +32,8 @@ def create_meshgrid3d(
         ys = (ys / (height - 1) - 0.5) * 2
         zs = (zs / (depth - 1) - 0.5) * 2
     # generate grid by stacking coordinates
-    # xs, ys, zs = torch.meshgrid([zs, xs, ys])
-    # base_grid = torch.stack([zs, ys, xs], dim=-1)  # DxWxHx3, (z, y, x)
-    base_grid = torch.stack(torch.meshgrid([zs, xs, ys]), dim=-1)  # DxWxHx3
+    xs, ys, zs = torch.meshgrid([zs, xs, ys])
+    base_grid = torch.stack([zs, ys, xs], dim=-1)  # DxWxHx3, (z, y, x)
     return base_grid.unsqueeze(0)
 
 
@@ -130,27 +127,25 @@ class DeformSVOXNGP(SVOXNGP):
         """Apply deformation to grid data and zero deform."""
         print('\nMerge deformation to grid data.')
         print('Please re-init optimizer in the Trainer.')
-        start_t = time.time()
         D, H, W = self.deform_grid.shape[-3:]
         dst_coords = create_meshgrid3d(
             D, H, W, normalized_coordinates=True).type_as(self.deform_grid)
-        # `dst_coords` is [1, D, H, W, 3], in [-1, 1]
-        # TODO: find those deformed coords, mask [1, D, H, W]
-        # breakpoint()
+        # `dst_coords` is [1, D, H, W, 3], in [-1, 1], the 3-tuple is (z, y, x)
+        # i.e. dst_coords[0, d, h, w, :] == (w, h, d)
+        # using this to do grid_sample we will get
+        # sampled_data[0, :, d, h, w] == data[0, :, d, h, w]
+        # which is what we want
+        # find those deformed coords, mask [1, D, H, W]
         deform_mask = (
             self._post_proc_deform(self.deform_grid.data).abs().sum(1) > 1e-4)
         dst_coords = dst_coords[deform_mask].contiguous()  # [N, 3]
         deform_mask = deform_mask[0]  # [D, H, W]
         src_coords = dst_coords + self.deform_grid.data[
             0][:, deform_mask].transpose(0, 1).contiguous()
-        # src_coords = dst_coords + self._post_proc_deform(
-        #     self.deform_grid.data.permute(0, 2, 3, 4, 1).contiguous())
         # apply deformation
-        self.svox2_grid.refine(src_coords, dst_coords, deform_mask)
+        self.svox2_grid.refine(src_coords, deform_mask)
         # re-init deformation field
         self.deform_grid.data.zero_()
-        # time elapsed
-        print(f'Merge deformation took {time.time() - start_t:.2f}s\n')
 
     def train(self, mode: bool = True):
         super().train(mode)

@@ -174,6 +174,10 @@ class NeRFSystem(LightningModule):
             imageio.imsave(os.path.join(self.val_dir, fn), rgb_gt)
             logs['rgb_gt_img'] = rgb_gt
 
+        # in case other predictions are needed
+        if 'flow' in results.keys():
+            logs['flow'] = results['flow']
+
         return logs
 
     def validation_epoch_end(self, outputs):

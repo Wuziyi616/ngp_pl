@@ -65,7 +65,7 @@ class NeRFSystem(BaseNeRFSystem):
         logs = super().validation_step(batch, batch_nb)
 
         flow_gt = batch['flow']
-        results = self(batch, split='test')
+        flow_pred = logs.pop('flow')
 
         # save test image to disk
         if not self.hparams.no_save_test and self.global_rank == 0:
@@ -73,7 +73,7 @@ class NeRFSystem(BaseNeRFSystem):
             w, h = self.train_dataset.img_wh
             # flow visualization
             flow_pred = rearrange(
-                results['flow'] - batch['bg_flow'], '(h w) c -> h w c', h=h)
+                flow_pred - batch['bg_flow'], '(h w) c -> h w c', h=h)
             flow_pred = flow2img(flow_pred)
             flow_gt = rearrange(
                 flow_gt - batch['bg_flow'], '(h w) c -> h w c', h=h)

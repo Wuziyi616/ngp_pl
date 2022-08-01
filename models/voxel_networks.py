@@ -23,8 +23,10 @@ def grid_sample(data, grid, align_corners=False):
     """
     # https://discuss.pytorch.org/t/surprising-convention-for-grid-sample-coordinates/79997/3
     # the 3-tuple of `grid` is treated as (k, j, i), i.e. (z, y, x)
+    # so if grid[0, a, b, c, :] = (x, y, z)
+    # then sampled_data[0, :, a, b, c] == data[0, :, z, y, x]
     return F.grid_sample(
-        data.permute(0, 1, 4, 3, 2),
+        data,
         grid,
         mode='bilinear',
         padding_mode='border',
@@ -86,24 +88,20 @@ class SimpleGrid(nn.Module):
         return sigmas, colors
 
     @torch.no_grad()
-    def refine(self, src_coords, dst_coords, mask):
+    def refine(self, src_coords, dst_mask):
         """Refine `density_grid` and `sh_grid` by applying deformation.
 
         Inputs:
             src_coords: coordinates before deformation, [N, 3]
-            dst_coords: coordinates after deformation, [N, 3].
-                Both coords are in [-1, 1].
-            mask: [D, H, W], 1 is the coords to be refined
+            dst_mask: [D, H, W], 1 is the coords to be refined
         """
-        # assert dst_coords.shape[1:4] == self.density_grid.shape[-3:]
-        assert mask.shape == self.density_grid.shape[-3:]
-        # breakpoint()
-        if not mask.any():
+        assert dst_mask.shape == self.density_grid.shape[-3:]
+        if not dst_mask.any():
             return
         # resample to update grids
-        self.density_grid.data[0][:, mask] = point_sample(
+        self.density_grid.data[0][:, dst_mask] = point_sample(
             self.density_grid.data, src_coords, transpose=False)
-        self.sh_grid.data[0][:, mask] = point_sample(
+        self.sh_grid.data[0][:, dst_mask] = point_sample(
             self.sh_grid.data, src_coords, transpose=False)
 
     @torch.no_grad()

@@ -98,7 +98,7 @@ def get_opts():
     parser.add_argument(
         '--occ_loss_w', type=float, default=1e-2, help='opacity loss')
     parser.add_argument(
-        '--flow_loss_w', type=float, default=10., help='flow loss')
+        '--flow_loss_w', type=float, default=100., help='flow loss')
 
     parser.add_argument(
         '--exp_name', type=str, default='exp', help='experiment name')
